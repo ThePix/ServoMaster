@@ -1,14 +1,28 @@
-# Configuration constants
+"""
+ServoMaster
+Copyright 2024 Andy joel and Preston&District MRS
 
-ON_LINE = False   # Set to False to test without connecting to I2C
-QUIT_WITHOUT_CONFIRM = True
-TIME_FACTOR = 10.0
-REPORT_SERVO_SWITCHING = True
-NUMBER_OF_ROWS = 10   # If you have less servos or LEDS or buttons than this it will crash!!!
-INCREMENT = 5
+See here:
+https://github.com/ThePix/ServoMaster/wiki
+"""
 
 
-# general Python Imports
+#################################################################################
+# CONFIGURATION CONSTANTS
+
+ON_LINE = False                 # Set to False to test without connecting to I2C
+QUIT_WITHOUT_CONFIRM = True     # Set to True to skip the confirmation when quitting
+REPORT_SERVO_SWITCHING = True   # If True requests to change servos is logged to console
+TIME_FACTOR = 10.0              # Globally control servo speed
+NUMBER_OF_ROWS = 10             # Show this number of rows in the GUI
+INCREMENT = 5                   # Jump this number of rows in the GUI
+DESC_WIDTH = 24                 # The description for servos can be this long
+ANGLE_ADJUST = 10               # Up/down buttons change the angle this much
+
+
+#################################################################################
+# PYTHON IMPORTS
+
 import time
 import re
 import sys
@@ -28,34 +42,32 @@ if ON_LINE:
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import font, Menu, messagebox, PhotoImage, Toplevel, Scrollbar, TclError, TclError
-#import PIL as pil
-#from PIL import Image, ImageTk
-
-
-print("Starting up...")
-
-
-
 
 
 
 #################################################################################
-# Represents a servo
-# Works in hundredths of degrees internally
-# The real servo is identified by cluster and number
-# Has an "on" angle and an "off" angle, which can be either way around
-class Servo:
-    count = 0
 
-    # Adds a servo object, given a string
-    # The string should consist of an "s" to identify it as a servo
-    # followed by (all separated with spaces):
-    #    the address - the board number, a dot and the pin number
-    #    the speed
-    #    the off angle
-    #    the on angle
-    #    the descriptor
+class Servo:
+    """
+    Represents a servo
+    Works in hundredths of degrees internally
+    The real servo is identified by board and number
+    Has an "on" angle and an "off" angle, which can be either way around
+    """
+
+    count = 0  # used to give eaxh one an index number
+
     def create(lst, s):
+        """
+        Adds a servo object, given a string.
+        The string should consist of an "s" to identify it as a servo
+        followed by (all separated with spaces):
+           the address - the board number, a dot and the pin number
+           the speed
+           the off angle
+           the on angle
+           the descriptor
+        """
         md = re.match('s (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+),? ?(.*)', s)
         if md:
             servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), md.group(6))
@@ -66,6 +78,10 @@ class Servo:
             return None
    
     def __init__(self, _board_no, _pin_no, _speed, _off_angle, _on_angle, _desc=None):
+        """
+        Constructor. As well as setting the given values, also creates a servo object from the I2C
+        board.        
+        """
         self.board_no = _board_no
         self.pin_no = _pin_no
         self.speed = _speed
@@ -87,9 +103,11 @@ class Servo:
         Servo.count += 1
        
     def id(self):
+        """ The ID is the 'board.pin'. """
         return f'{self.board_no}.{self.pin_no}'
 
     def write_to_file(self, f):
+        """ Writes not just this servo, but also connected buttons and LEDs. """
         f.write(f'\ns {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.on_angle / 100)}, {self.desc}\n')
         for led in self.on_leds:
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
@@ -101,21 +119,43 @@ class Servo:
             f.write(f'b off {b.board_no}.{b.pin_no}\n')
        
     def set_widget(self, _widget):
+        """
+        Set a Label widget that the servo can report its angle to.
+        Or set to None to stop it.
+        """
         self.widget = _widget
+        
+    def sanity_check(self):
+        """ Check for matching numbers of buttons and LEDS. """
+        if len(self.on_leds) == 0:
+            print(f'WARNING: Not found any "on" LEDs for servo {self.id()} ({self.desc}).')
+        elif len(self.off_leds) != len(self.on_leds):
+            print(f'WARNING: Mismatch in the number of "on" and "off" LEDs for servo {self.id()} ({self.desc}).')
+        if len(self.on_buttons) == 0:
+            print(f'WARNING: Not found any "on" buttons for servo {self.id()} ({self.desc}).')
+        elif len(self.off_buttons) != len(self.on_buttons):
+            print(f'WARNING: Mismatch in the number of "on" and "off" buttons for servo {self.id()} ({self.desc}).')
+       
 
     def set_led(self, led, turn_on):
+        """ Add the given LED to the list of "on" or "off" LEDs. """
         if turn_on:
             self.on_leds.append(led)
         else:
             self.off_leds.append(led)
 
     def set_button(self, button, turn_on):
+        """ Add the given button to the list of "on" or "off" buttons. """
         if turn_on:
             self.on_buttons.append(button)
         else:
             self.off_buttons.append(button)
 
     def set(self, _turn_on):
+        """"
+        Set the target angle to the on or off angle, which will cause the servo
+        to move to that angle over a few seconds.
+        """
         self.target_angle = self.on_angle if _turn_on else self.off_angle
         self.turn_on = _turn_on
         if REPORT_SERVO_SWITCHING:
@@ -123,21 +163,35 @@ class Servo:
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
         
     def set_angle(self, angle):
+        """"
+        Set the target angle, which will cause the servo
+        to move to that angle over a few seconds. Not used in normal running
+        but can be accessed from the command line.
+        """
         self.target_angle = angle * 100
 
     def get_target_angle(self):
+        """ Gets the angle as a nicely formatted string. """
         return str(round(self.target_angle / 100)) + '°'
 
     def get_current_angle(self):
+        """ Gets the angle as a nicely formatted string. """
         return str(round(self.current_angle / 100)) + '°'
 
     def get_on_angle(self):
+        """ Gets the angle as a nicely formatted string. """
         return str(round(self.on_angle / 100)) + '°'
 
     def get_off_angle(self):
+        """ Gets the angle as a nicely formatted string. """
         return str(round(self.off_angle / 100)) + '°'
 
     def adjust(self, elapsed):
+        """
+        Updates the current angle given the elasped time.
+        Also decides if LEDs should be changed, and
+        updates the current angle on the GUI if widget is set.
+        """
         diff = self.current_angle - self.target_angle
         if diff == 0:
             if self.moving:
@@ -163,21 +217,19 @@ class Servo:
         if ON_LINE:
             self.servo.angle = self.current_angle / 100
        
-        #print(self.status())
         if self.widget:
             self.widget.config(text=self.get_current_angle())
         return True
 
-    def status(self):
-        return str(self.current_angle) + "/" + str(self.target_angle)
-
     def reset_leds(self):
+        """ Turns off all associated LEDs. """
         for led in self.on_leds:
             led.set(False)
         for led in self.off_leds:
             led.set(False)
         
     def set_leds(self):
+        """ Turns on correct LEDs. """
         if self.target_angle == self.on_angle:
             for led in self.on_leds:
                 led.set(True)
@@ -187,19 +239,21 @@ class Servo:
 
 
 
-
-
-
-#############################################
-# represents an IOPin, super class for buttons and LEDs
+#################################################################################
+ 
 class IOPin:
+    """
+    Represents an I/O pin, superclass for buttons and LEDs.
+    """
 
-    # Adds a telltale object, given a string
-    # The string should consist of a "l" (for LED) to identify it as a telltale
-    # followed by (all separated with spaces):
-    #    on/off
-    #    the address - the board number, a dot and the pin number
     def create(klass, lst, not_lst, letter, s, servos):
+        """
+        Adds an I/O pin object, given a string
+        The string should consist of a "l" (for LED) or "b" (for button) to identify it as such
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        """
         md = re.match(letter + ' (on|off) (\\d+)\\.(\\d+)', s)
         if not md:
             raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
@@ -220,94 +274,115 @@ class IOPin:
         item.set_servo(servo, turn_on)
         return item, turn_on
 
-    def id(self):
-        return f'{self.board_no}.{self.pin_no}'
-
     def servo_list(lst):
+        """ Gets a string list, separated by slashes, of servos in the given list. """
         lst2 = []
         for servo in lst:
             lst2.append(servo.id())
         return '/'.join(lst2)
 
-    def list_off_servos(self):
-        s= IOPin.servo_list(self.off_servos)
-        print('off', s)
-        return s
-
-    def list_on_servos(self):
-        s= IOPin.servo_list(self.on_servos)
-        print('on', s)
-        return s
-
     def find_in_list(lst, board_no, pin_no):
+        """
+        Gets the first element in the list that matchesboth board and pin,
+        or None if none found.
+        """
         for el in lst:
             if el.board_no == board_no and el.pin_no == pin_no:
                 return el
         return None
         
+
     def __init__(self, _board_no, _pin_no):
+        """ Constructor. """
         self.board_no = _board_no
         self.pin_no = _pin_no
         self.on_servos = []
         self.off_servos = []
        
+
+    def id(self):
+        """ The ID is the 'board.pin'. """
+        return f'{self.board_no}.{self.pin_no}'
+
+    def list_servos(self, turn_on):
+        """ Gets a string list, separated by slashes, of "off" or "on" servos. """
+        lst = self.on_servos if turn_on else self.off_servos
+        return IOPin.servo_list(lst)
+
     def set_servo(self, servo, turn_on):
+        """ Add the given servo to the "on" or "off" list. """
         if turn_on:
             self.on_servos.append(servo)
         else:
             self.off_servos.append(servo)
             
-        
-    #def desc(self):
-    #    return f'On: {IOPin.servo_list(self.on_servos)} Off: {IOPin.servo_list(self.off_servos)}'
 
 
-#############################################
-# represents an LED
-class Telltale(IOPin):
+#################################################################################
+
+class Led(IOPin):
+    """
+    Represents an LED
+    """
     count = 0
 
-    # Adds a telltale object, given a string
-    # The string should consist of a "l" (for LED) to identify it as a telltale
-    # followed by (all separated with spaces):
-    #    on/off
-    #    the address - the board number, a dot and the pin number
     def create(s, servos):
-        led, turn_on = IOPin.create(Telltale, telltales, buttons, 'l', s, servos)
+        """
+        Adds an Led object, given a string.
+        The string should consist of a "l" to identify it
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        Uses IOPin.create to do most of the work
+        """
+        led, turn_on = IOPin.create(Led, leds, buttons, 'l', s, servos)
         servo.set_led(led, turn_on)
 
 
     def __init__(self, _board_no, _pin_no):
+        """
+        Constructor. Uses the super contructor, but also connects to the I/O board.
+        """
         super().__init__(_board_no, _pin_no)
         if ON_LINE:
             self.led = io_boards[self.board_no].get_pin(self.pin_no)
             self.led.switch_to_output(value=True)
-        self.index = Telltale.count
-        print(self.index)
-        Telltale.count += 1
+        self.index = Led.count
+        Led.count += 1
        
     def set(self, value):
-        print(value)
-        print(self.index)
+        """ Sets the LED on or off. """
+        #print(value)
+        #print(self.index)
         if ON_LINE:
             self.led.value = not value
 
 
-#############################################
-# represents a push button
+
+#################################################################################
+
 class PButton(IOPin):
+    """
+    Represents a button.
+    """
     count = 0
 
-    # Adds a button object, given a string
-    # The string should consist of a "b" to identify it as a button
-    # followed by (all separated with spaces):
-    #    on/off
-    #    the address - the board number, a dot and the pin number
     def create(s, servos):
-        button, turn_on = IOPin.create(PButton, buttons, telltales, 'b', s, servos)
+        """
+        Adds a button object, given a string.
+        The string should consist of a "b" to identify it
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        Uses IOPin.create to do most of the work
+        """
+        button, turn_on = IOPin.create(PButton, buttons, leds, 'b', s, servos)
         servo.set_button(button, turn_on)
 
     def __init__(self, _board_no, _pin_no):
+        """
+        Constructor. Uses the super contructor, but also connects to the I/O board.
+        """
         super().__init__(_board_no, _pin_no)
         if ON_LINE:
             self.button = io_boards[self.board_no].get_pin(self.pin_no)
@@ -316,9 +391,12 @@ class PButton(IOPin):
         self.index = PButton.count
         PButton.count += 1
  
-    # Only access the button state through this as it has exception handling
-    # to deal with issues (hopefully) and for testing with no I2C connected
     def get(self):
+        """
+        Gets the button state.
+        Only access the button state through this as it has exception handling
+        to deal with issues (hopefully) and for testing with no I2C connected.
+        """
         if not ON_LINE:
             return False
         
@@ -329,9 +407,16 @@ class PButton(IOPin):
             print(f'board={self.board} pin={self.pin}')
 
     def set_widget(self, widget):
+        """
+        Set a Label widget that the servo can report its angle to.
+        Or set to None.
+        """
         self.widget = widget
 
     def check_state(self):
+        """
+        Call this every loop to have the button check its state and act appropriately.        
+        """
         if self.get():
             for servo in self.on_servos:
                 servo.set(True)
@@ -347,13 +432,14 @@ class PButton(IOPin):
                 self.widget.config(text='ON!', foreground='white', background='black')
             else:
                 self.widget.config(text='off', background='', foreground='black')
-        except AttributeError:
-            print('.')
+        except (AttributeError, tk.TclError):
+            # seems to happen when closing the button window
+            print('*')
 
 
 
-#########################################################################
-# Initialise arrays, etc.
+#################################################################################
+# INITIALISING
 
 previous_time = time.time()
 
@@ -370,80 +456,44 @@ def print_lcd(n, s):
 
 
 servos = []
-telltales = []
+leds = []
 buttons = []
 
+request = { 'action':False, 'testing':True}  # User input is done by changing this to request a change
+loop_count = 0
+
+window = None
+
+servo_grid_rows = []
+button_grid_rows = []
+led_grid_rows = []
 
 
 
-
-
-##################################################
+#################################################################################
 # SAVING AND LOADING
 
-
-"""
-We can record everything to file so it is saved for next time
-
-Text file, servo.txt
-Each line indicates a thing
-If it starts "s", it is a servo, etc
-Note that board addresses are in hex, other numbers are not!
-Does some checks on loading, but aimed at spotting bad connections, etc.
-Does not check for repeated addresses
-
-S0x40
-S0x41
-IO0x24
-LCD0x20
-
-s 0.0, 1000, 0, 170, one
-b on 0.1
-b off 0.2
-l on 0.12
-l off 0.13
-
-s 0.1, 3000, 30, 120, servo 2
-b on 0.3
-b off 0.4
-l on 0.14
-l off 0.15
-
-s 0.3, 1000, 0, 90, number 3
-b on 0.3
-b off 0.4
-
-s 0.1, 1000, 0, 170, 
-b on 0.5
-b off 0.6
-
-s 0.2, 4000, 170, 0, five
-
-s 0.3, 4000, 0, 30, six
-
-
-
-"""
-
 def save():
-    with open('servo.txt', 'w', encoding="utf-8") as f:
-        # Save the boards
-        for servo_board in servo_boards:
-            f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
-        for io_board in io_boards:
-            f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
-        for lcd_board in lcd_boards:
-            f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
+    """
+    Saves the configuration to file.
+    """
+    try:
+        with open('servo.txt', 'w', encoding="utf-8") as f:
+            # Save the boards
+            for servo_board in servo_boards:
+                f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
+            for io_board in io_boards:
+                f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
+            for lcd_board in lcd_boards:
+                f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
 
-        # Now save the servos and related data
-        for servo in servos:
-            servo.write_to_file(f)
-#            f.write(f's {servo.board_no}.{servo.number}, {servo.speed}, {round(servo.off_angle / 100)}, {round(servo.on_angle / 100)}, {servo.desc}\n')
-        #for telltale in telltales:
-        #    f.write(f's {telltale.board_no}.{telltale.number}, {telltale.desc}\n')
-        #for button in buttons:
-        #    f.write(f's {button.board_no}.{button.number}, {button.desc}\n')
-    print("Save successful")
+            # Now save the servos and related data
+            for servo in servos:
+                servo.write_to_file(f)
+        print("INFO: Save successful")
+    except Exception as err:
+        print('ERROR: Failed to save the configuration file, servo.txt.')
+        print(f"Reported: Unexpected {err=}, {type(err)=}")
 
 
 
@@ -454,10 +504,14 @@ if ON_LINE:
     print("INFO: Found I2C devices:", [hex(device_address) for device_address in i2c_devices])
 
 
-# Adds an I2C board, given a string
-# The string should consist of the board type identifier - one or more letters in upper case
-# followed directly by the addess in hexadecimal (use lower case letters if required!)
 def load_device(line):
+    """
+    Adds an I2C board, given a string.
+    The string should consist of the board type identifier - one or more letters in upper case
+    followed directly by the addess in hexadecimal (use lower case letters if required!).
+    
+    This is in a function of its own so we can readily exit it it a problem is encountered.
+    """
     if not ON_LINE:
         return
         
@@ -483,6 +537,9 @@ def load_device(line):
             print('ERROR: Device code not recognised: ' + line)
 
 try:
+    """
+    File access can be problematic, so wrap in a try/except block
+    """
     with open('servo.txt', encoding="utf-8") as f:
         servo = None
         for line in f:
@@ -493,8 +550,7 @@ try:
             elif line[0:1] == 'b':
                 PButton.create(line, servo)
             elif line[0:1] == 'l':
-                Telltale.create(line, servo)
-            # etc!!!
+                Led.create(line, servo)
             else:
                 load_device(line)
 except FileNotFoundError:
@@ -512,19 +568,19 @@ print_lcd(1, "Hello P&D MRS!")
 print(f"INFO: Found {len(ups_boards)} UPS board(s).")
 
 print(f"INFO: Found {len(servos)} servo(s).")
-print(f"INFO: Found {len(telltales)} LED(s).")
+print(f"INFO: Found {len(leds)} LED(s).")
 print(f"INFO: Found {len(buttons)} button(s).")
+for servo in servos:
+    servo.sanity_check()
 
 
-        
+       
 
+#################################################################################
+# COMMAND LINE
 
-##############################################################################
-# Command line
-#
 # For testing it is good to be able to type requests to set the servo, and this function handles that
 # It runs in its own thread, and sets the global variable "req" when a request is made
-req = { 'action':False, 'testing':True}
 patterns = [
     re.compile("^(exit|quit|x)$", re.IGNORECASE),
     re.compile("^(\\d+) (\\d+)$"),
@@ -535,34 +591,38 @@ patterns = [
 ]
 
 def input_loop():
-    while not req['action'] == 'terminate':
+    """
+    Gets input from the command line, sets the request object
+    for mail loop to deal with.
+    """
+    while not request['action'] == 'terminate':
         s = input()
         print("Got: " + s)
         mds = []
         for pattern in patterns:
             mds.append(pattern.match(s))
         if mds[0]:
-            req['action'] = 'terminate'
+            request['action'] = 'terminate'
         elif mds[1]:
-            req['action'] = 'angle'
-            req['servo'] = int(mds[1].group(1))
-            req['angle'] = int(mds[1].group(2))
+            request['action'] = 'angle'
+            request['servo'] = int(mds[1].group(1))
+            request['angle'] = int(mds[1].group(2))
         elif mds[2]:
             print('servo on')
-            req['action'] = 'on'
-            req['servo'] = int(mds[2].group(1))
+            request['action'] = 'on'
+            request['servo'] = int(mds[2].group(1))
         elif mds[3]:
             print('servo off')
-            req['action'] = 'off'
-            req['servo'] = int(mds[3].group(1))
+            request['action'] = 'off'
+            request['servo'] = int(mds[3].group(1))
         elif mds[4]:
             print('LED on')
-            req['action'] = 'LED on'
-            req['servo'] = int(mds[4].group(1))
+            request['action'] = 'LED on'
+            request['servo'] = int(mds[4].group(1))
         elif mds[5]:
             print('LED off')
-            req['action'] = 'LED off'
-            req['servo'] = int(mds[5].group(1))
+            request['action'] = 'LED off'
+            request['servo'] = int(mds[5].group(1))
         else:
             print("Input commands in the form x y")
             print(req)
@@ -570,36 +630,41 @@ def input_loop():
 
 
 
-#############################################################
+#################################################################################
 # MAIN LOOP
-#
-# Main loop:
-#    handles time
-#    checks if buttons have been pressed
-#    responds to requestion from the command line/GUI
-#    moves servo
-# ... but most of the work is done elsewhere
+
 def main_loop():
-    global previous_time, count_label, loop_count
-    print('INFO: Starting the main loop')
-    while not req['action'] == 'terminate':
+    """
+    Handles time,
+    checks if buttons have been pressed,
+    responds to requests from the command line/GUI,
+    moves servo...
+    But most of the work is done elsewhere.
+    """
+    global previous_time, loop_count
+    print('INFO: Starting the main loop.')
+    while not request['action'] == 'terminate':
         # HANDLE TIME
-        now_time = time.time() # !!!
+        now_time = time.time()
         elapsed = now_time - previous_time
         previous_time = now_time
         increment = TIME_FACTOR * elapsed
         
-        """
         # If the GUI is up, then count_label is a Label object
         # and can be updated with the loop count to show it is going
         # and indicate how fast. Cap at a million so no chance of overflow.
-        # !!! prevents graceful exit !!!
-        if count_label:
-            count_label.config(text=str(loop_count))
+        if window and window.count_label:
+            try:
+                window.count_label.config(text=str(loop_count))
+            except tk.TclError:
+                # Seems to happen when quiting, I guess if the label is destroyed after the test
+                # but part way through the tkinter stuff.
+                print('*')
             loop_count += 1
             if loop_count > 999999:
                 loop_count = 0
-        """    
+        #else:
+        #    print('.', end='')
 
 
         # HANDLE INPUTS
@@ -607,47 +672,51 @@ def main_loop():
             button.check_state()
            
         # HANDLE INPUT REQUESTS
-        if req['action'] == 'angle':
-            if req['servo'] >= len(servos):
+        if request['action'] == 'angle':
+            if request['servo'] >= len(servos):
                 print("WARNING: Servo out of range (0-" + str(len(servos)) + ")")
             else:
-                servos[req['servo']].set_angle(req['angle'])
-            req['action'] = False
+                servos[request['servo']].set_angle(request['angle'])
+            request['action'] = False
 
-        if req['action'] == 'on':
-            if req['servo'] >= len(servos):
+        if request['action'] == 'on':
+            if request['servo'] >= len(servos):
                 print("WARNING: Servo out of range (0-" + str(len(servos)) + ")")
             else:
-                servos[req['servo']].set(True)
-            req['action'] = False
+                servos[request['servo']].set(True)
+            request['action'] = False
 
-        if req['action'] == 'off':
-            if req['servo'] >= len(servos):
+        if request['action'] == 'off':
+            if request['servo'] >= len(servos):
                 print("WARNING: Servo out of range (0-" + str(len(servos)) + ")")
             else:
-                servos[req['servo']].set(False)
-            req['action'] = False
+                servos[request['servo']].set(False)
+            request['action'] = False
 
-        if req['action'] == 'LED on':
-            if req['servo'] >= len(telltales):
-                print("WARNING: LED out of range (0-" + str(len(telltales)) + ")")
+        if request['action'] == 'LED on':
+            if request['servo'] >= len(leds):
+                print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
-                telltales[req['servo']].set(True)
-            req['action'] = False
-        if req['action'] == 'LED off':
-            if req['servo'] >= len(telltales):
-                print("WARNING: LED out of range (0-" + str(len(telltales)) + ")")
+                leds[request['servo']].set(True)
+                if REPORT_SERVO_SWITCHING:
+                    print(f'INFO: LED on {leds[request['servo']].id()}')
+            request['action'] = False
+        if request['action'] == 'LED off':
+            if request['servo'] >= len(leds):
+                print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
-                telltales[req['servo']].set(False)
-            req['action'] = False
-        if req['action'] == 'all LED on':
-            for telltale in telltales:
-                telltale.set(True)
-            req['action'] = False
-        if req['action'] == 'all LED off':
-            for telltale in telltales:
-                telltale.set(False)
-            req['action'] = False
+                leds[request['servo']].set(False)
+                if REPORT_SERVO_SWITCHING:
+                    print(f'INFO: LED off {leds[request['servo']].id()}')
+            request['action'] = False
+        if request['action'] == 'all LED on':
+            for led in leds:
+                led.set(True)
+            request['action'] = False
+        if request['action'] == 'all LED off':
+            for led in leds:
+                led.set(False)
+            request['action'] = False
 
 
 
@@ -657,15 +726,15 @@ def main_loop():
             if servo.adjust(increment):
                 moving_flag = True
 
-        time.sleep(0.01)
+        time.sleep(0.001)
+
+    print("INFO: Main loop terminated.")
 
 
 
-
-
-###################################################################
+#################################################################################
 # THREADING
-# 
+ 
 # We have three threads, one that does the work, for for the GUI,
 # one for the command line.
 
@@ -674,11 +743,9 @@ input_thread = Thread(target = input_loop)
 input_thread.daemon = True
 input_thread.start()
 
-# The main loop is not a daemon thread, it might be in the middle of doing stuff
-# not sure if this is an issue, but just in case
-# has to be stopped by setting req['action'] = 'terminate'
-count_label = None
-loop_count = 0
+# The main loop is not a daemon thread, it might be in the middle of doing stuff.
+# Not sure if this is an issue, but just in case!
+# It has to be stopped by setting request['action'] = 'terminate'
 Thread(target = main_loop).start()  #!!!!!
 
 # The GUI is done in the defaut thread; no need to define a new one
@@ -687,88 +754,122 @@ Thread(target = main_loop).start()  #!!!!!
 
 
 
+
+
 ######################################################################
-# The GUI
-
-# Some globals that track which ones are being displayed
-# If servo_offset is 10, then we show servos 10 to 29
-servo_offset = 0
-button_offset = 0
-led_offset = 0
-
-
+# GUI CLASSES
 
 
 class ButtonsWindow(tk.Toplevel):
-    """ Define a special child window that stops buttons trying to update it when it is destroyed"""
+    """ 
+    Define a special child window that stops buttons trying to update labels in it when it is destroyed.
+    More specifically, it sets the widget in the buttons to None, and then tells each row to
+    destroy the label. Hopefully the program will then exit gracefully.
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
     def destroy(self):
         for i in range(len(buttons)):
             buttons[i].set_widget(None)        
+        for row in button_grid_rows:
+            row.destroy_button()
         return super().destroy()
+
 
 class ServoGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one servo,
     and buttons and labels on the row will change and reflect its state, but
-    which servo that is can vary depending on what servo_offset is.
+    which servo that is can vary depending on what self.offset is.
     """
+    
+    """
+    def up_button_pressed(self, event):
+        ServoGridRow.find_row(event.widget).up_button()
+    
     def find_row(widget):
-        """ Finds the row associated with a button press """
         for row in servo_grid_rows:
             if row.btn_up == widget or row.btn_down == widget or row.btn_on_off == widget:
                 return row
+    """
 
-    def headers():
-        ttk.Label(text='#', font=heading_font).grid(column=0, row=0)
-        ttk.Label(text='Identity', width=20, font=heading_font).grid(column=1, row=0)
-        ttk.Label(text='Switch', font=heading_font).grid(column=2, row=0)
-        ttk.Label(text='State', width=10, font=heading_font).grid(column=3, row=0)
-        ttk.Label(text='Target', width=10, font=heading_font).grid(column=6, row=0)
-        ttk.Label(text='Current', width=10, font=heading_font).grid(column=7, row=0)
+    offset = 0
 
-    def __init__(self, row):
+    def offset_plus_10():
+        if ServoGridRow.offset > len(servos) - INCREMENT:
+            print('BAD INPUT: Trying to go beyond end!')
+            return
+        ServoGridRow.offset += INCREMENT
+        ServoGridRow.set_offset()
+
+    def offset_minus_10():
+        if ServoGridRow.offset == 0:
+            print('BAD INPUT: Trying to go beyond start!')
+            return
+        ServoGridRow.offset -= INCREMENT
+        ServoGridRow.set_offset()
+
+    def set_offset():
+        for servo in servos:
+            servo.set_widget(None)
+        for row in servo_grid_rows:
+            row.update()
+
+    def headers(font):
+        """ Set the first row. """
+        ttk.Label(text='#', width=5, font=font).grid(column=0, row=0)
+        ttk.Label(text='ID', width=7, font=font).grid(column=1, row=0)
+        ttk.Label(text='Description', width=DESC_WIDTH, font=font).grid(column=2, row=0)
+        ttk.Label(text='Switch', font=font).grid(column=3, row=0)
+        ttk.Label(text='State', width=10, font=font).grid(column=4, row=0)
+        ttk.Label(text='Target', width=10, font=font).grid(column=7, row=0)
+        ttk.Label(text='Current', width=10, font=font).grid(column=8, row=0)
+
+    def __init__(self, row, font):
         # When creating, the first servo is 0
         self.row = row             # The row in the table in the GUI
         self.servo = servos[row]   # The current servo - but can change
-        self.lbl_index = ttk.Label(text=str(row), font=label_font)
+        self.lbl_index = ttk.Label(text=str(row), font=font)
         self.lbl_index.grid(column=0, row=1 + row, pady=5)
        
-        self.lbl_desc = ttk.Label(text=self.servo.desc, width=20, font=label_font)
-        self.lbl_desc.grid(column=1, row=1 + row)
+        self.lbl_id = ttk.Label(text=self.servo.id(), width=7, font=font)
+        self.lbl_id.grid(column=1, row=1 + row)
+
+        self.lbl_desc = ttk.Label(text=self.servo.desc, width=DESC_WIDTH, font=font)
+        self.lbl_desc.grid(column=2, row=1 + row)
 
         self.btn_on_off = ttk.Button(text="On/Off")
-        self.btn_on_off.grid(column=2, row=1 + row)
-        self.btn_on_off.bind("<Button-1>", on_off_button_pressed)
+        self.btn_on_off.grid(column=3, row=1 + row)
+        self.btn_on_off.bind("<Button-1>", self.on_off_button)
        
-        self.lbl_state = ttk.Label(text='OFF', width=10, font=label_font)    
-        self.lbl_state.grid(column=3, row=1 + row)
+        self.lbl_state = ttk.Label(text='OFF', width=10, font=font)    
+        self.lbl_state.grid(column=4, row=1 + row)
        
         self.btn_up = ttk.Button(text="Up")
-        self.btn_up.grid(column=4, row=1 + row)
-        self.btn_up.bind("<Button-1>", up_button_pressed)
+        self.btn_up.grid(column=5, row=1 + row)
+        self.btn_up.bind("<Button-1>", self.up_button)
         self.btn_up.index = row
        
         self.btn_down = ttk.Button(text="Down")
-        self.btn_down.grid(column=5, row=1 + row)
-        self.btn_down.bind("<Button-1>", down_button_pressed)
+        self.btn_down.grid(column=6, row=1 + row)
+        self.btn_down.bind("<Button-1>", self.down_button)
        
-        self.lbl_target_angle = ttk.Label(text=self.servo.get_target_angle(), width=10, font=label_font)
-        self.lbl_target_angle.grid(column=6, row=1 + row)
+        self.lbl_target_angle = ttk.Label(text=self.servo.get_target_angle(), width=10, font=font)
+        self.lbl_target_angle.grid(column=7, row=1 + row)
        
-        self.lbl_current_angle = ttk.Label(text=self.servo.get_current_angle(), width=10, font=label_font)
-        self.lbl_current_angle.grid(column=7, row=1 + row)
+        self.lbl_current_angle = ttk.Label(text=self.servo.get_current_angle(), width=10, font=font)
+        self.lbl_current_angle.grid(column=8, row=1 + row)
         self.servo.set_widget(self.lbl_current_angle)
 
     def update(self):
         """
-        Updates the row for a new servo (or no servo) when servo_offset changes
+        Updates the row for a new servo (or no servo) when offset changes
         """
-        if 0 <= (self.row + servo_offset) < len(servos):
-            self.servo = servos[self.row + servo_offset]
-            self.lbl_index.config(text=str(self.row + servo_offset))
+        if 0 <= (self.row + self.offset) < len(servos):
+            self.servo = servos[self.row + self.offset]
+            self.lbl_index.config(text=str(self.row + self.offset))
+            self.lbl_id.config(text=self.servo.id())
             self.lbl_desc.config(text=self.servo.desc)
             state = 'ON' if self.servo.turn_on else 'OFF'
             self.lbl_state.config(text=state)    
@@ -779,14 +880,13 @@ class ServoGridRow():
         else:
             self.servo = None
             self.lbl_index.config(text='---')
+            self.lbl_id.config(text='---')
             self.lbl_desc.config(text='---')
             self.lbl_state.config(text='---')    
             self.lbl_target_angle.config(text='---')
             self.lbl_current_angle.config(text='---')
-            #print(f'no servo')
 
-    
-    def on_off_button(self):
+    def on_off_button(self, event):
         """ When the On/Off button for this row is pressed. """
         if not self.servo:
             print('BAD INPUT: No servo at row')
@@ -795,101 +895,133 @@ class ServoGridRow():
         if self.servo.turn_on:
             self.lbl_state.config(text='OFF')
             self.lbl_target_angle.config(text=self.servo.get_off_angle())
-            req['action'] = 'off'
-            req['servo'] = self.servo.index
+            request['action'] = 'off'
+            request['servo'] = self.servo.index
         else:
             self.lbl_state.config(text='ON')
             self.lbl_target_angle.config(text=self.servo.get_on_angle())
-            req['action'] = 'on'
-            req['servo'] = self.servo.index
+            request['action'] = 'on'
+            request['servo'] = self.servo.index
 
-
-    def up_button(self):
+    def up_button(self, event):
         """ When the Up button for this row is pressed. """
         if not self.servo:
             print('No servo at row')
             return
 
         if self.servo.turn_on:
-            if self.servo.on_angle > 16000:
+            if self.servo.on_angle > 17000 - ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go over 170')
                 return
-            self.servo.on_angle += 1000
+            self.servo.on_angle += ANGLE_ADJUST * 100
            
         else:
-            if self.servo.off_angle > 16000:
+            if self.servo.off_angle > 17000 - ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go over 170')
                 return
-            self.servo.off_angle += 1000
+            self.servo.off_angle += ANGLE_ADJUST * 100
 
-        self.servo.target_angle += 1000
+        self.servo.target_angle += ANGLE_ADJUST * 100
         self.lbl_target_angle.config(text=self.servo.get_target_angle())
 
-
-    def down_button(self):
+    def down_button(self, event):
         """ When the Down button for this row is pressed. """
         if not self.servo:
             print('No servo at row')
             return
 
         if self.servo.turn_on:
-            if self.servo.on_angle < 2000:
+            if self.servo.on_angle < 1000 + ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go under 10')
                 return
-            self.servo.on_angle -= 1000
+            self.servo.on_angle -= ANGLE_ADJUST * 100
            
         else:
-            if self.servo.off_angle < 2000:
+            if self.servo.off_angle < 1000 + ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go under 10')
                 return
-            self.servo.off_angle -= 1000
+            self.servo.off_angle -= ANGLE_ADJUST * 100
 
-        self.servo.target_angle -= 1000
+        self.servo.target_angle -= ANGLE_ADJUST * 100
         self.lbl_target_angle.config(text=self.servo.get_target_angle())
+
 
 class ButtonGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one (real) button,
     and buttons and labels on the row will change and reflect its state, but
-    which (real) button that is can vary depending on what button_offset is.
+    which (real) button that is can vary depending on what offset is.
     """
+    
+    offset = 0
+
+    def show_buttons():
+        newWindow = ButtonsWindow(window)
+        newWindow.title('Buttons')
+        ButtonGridRow.headers(newWindow)
+        for i in range(NUMBER_OF_ROWS):
+            button_grid_rows.append(ButtonGridRow(newWindow, i))
+
     def headers(win):
-        ttk.Label(win, text='#', font=heading_font).grid(column=0, row=0)
-        ttk.Label(win, text='ID', width=5, font=heading_font).grid(column=1, row=0)
-        ttk.Label(win, text='Off servos', width=20, font=heading_font).grid(column=2, row=0)
-        ttk.Label(win, text='On servos', width=20, font=heading_font).grid(column=3, row=0)
-        ttk.Label(win, text='State', font=heading_font, width=7).grid(column=4, row=0)
+        """ Set the first row. """
+        ttk.Label(win, text='#', font=window.heading_font).grid(column=0, row=0)
+        ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
+        ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
+        ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
+        ttk.Label(win, text='State', font=window.heading_font, width=7).grid(column=4, row=0)
+
+    def offset_plus_10():
+        if ButtonGridRow.offset > len(buttons) - INCREMENT:
+            print('BAD INPUT: Trying to go beyond end!')
+            return
+        ButtonGridRow.offset += INCREMENT
+        ButtonGridRow.set_offset()
+
+    def offset_minus_10():
+        if ButtonGridRow.offset == 0:
+            print('BAD INPUT: Trying to go beyond start!')
+            return
+        ButtonGridRow.offset -= INCREMENT
+        ButtonGridRow.set_offset()
+
+
+    def set_offset():
+        for button in buttons:
+            button.set_widget(None)
+        for row in button_grid_rows:
+            row.update()
+
 
     def __init__(self, win, row):
         # When creating, the first button is 0
         self.row = row             # The row in the table in the GUI
-        self.lbl_index = ttk.Label(win, text=str(row), font=label_font)
+        self.lbl_index = ttk.Label(win, text=str(row), font=window.label_font)
         self.lbl_index.grid(column=0, row=1 + row, pady=5)
        
-        self.lbl_desc = ttk.Label(win, text='---', width=20, font=label_font)
+        self.lbl_desc = ttk.Label(win, text='---', width=20, font=window.label_font)
         self.lbl_desc.grid(column=1, row=1 + row, sticky='w')
 
-        self.lbl_off_list = ttk.Label(win, text='---', width=20, font=label_font)
+        self.lbl_off_list = ttk.Label(win, text='---', width=20, font=window.label_font)
         self.lbl_off_list.grid(column=2, row=1 + row, sticky='w')
 
-        self.lbl_on_list = ttk.Label(win, text='---', width=20, font=label_font)
+        self.lbl_on_list = ttk.Label(win, text='---', width=20, font=window.label_font)
         self.lbl_on_list.grid(column=3, row=1 + row, sticky='w')
 
-        self.lbl_state = ttk.Label(win, text='---', width=7, font=label_font)    
+        self.lbl_state = ttk.Label(win, text='---', width=7, font=window.label_font)    
         self.lbl_state.grid(column=4, row=1 + row)
         self.update()
 
 
     def update(self):
         """
-        Updates the row for a new button (or no button) when button_offset changes
+        Updates the row for a new button (or no button) when offset changes
         """
-        if 0 <= (self.row + button_offset) < len(buttons):
-            self.button = buttons[self.row + button_offset]
-            self.lbl_index.config(text=str(self.row + button_offset))
+        if 0 <= (self.row + ButtonGridRow.offset) < len(buttons):
+            self.button = buttons[self.row + ButtonGridRow.offset]
+            self.lbl_index.config(text=str(self.row + ButtonGridRow.offset))
             self.lbl_desc.config(text=self.button.id())
-            self.lbl_off_list.config(text=self.button.list_off_servos())
-            self.lbl_on_list.config(text=self.button.list_on_servos())
+            self.lbl_off_list.config(text=self.button.list_servos(False))
+            self.lbl_on_list.config(text=self.button.list_servos(True))
             self.button.set_widget(self.lbl_state)
         else:
             self.button = None
@@ -898,49 +1030,90 @@ class ButtonGridRow():
             self.lbl_state.config(text='---')    
             self.lbl_off_list.config(text='---')
             self.lbl_on_list.config(text='---')
+            self.lbl_state.config(text='---')
+            
+    def destroy_button(self):
+        self.lbl_state.destroy()
 
 
-class TelltaleGridRow():
+class LedGridRow():
     """
-    Represents a row on the grid of the GUI. This will correspond to one LED (telltale),
+    Represents a row on the grid of the GUI. This will correspond to one LED,
     and buttons and labels on the row will change and reflect its state, but
-    which LED that is can vary depending on what led_offset is.
+    which LED that is can vary depending on what offset is.
     """
-    def find_row(widget):
-        """ Finds the row associated with a button press """
-        for row in led_grid_rows:
-            if row.btn_on == widget or row.btn_off == widget:
-                return row
+
+    offset = 0
+
+
+    def show_leds():
+        """ Responds to a menu click to show the window for LEDs"""
+
+        newWindow = Toplevel(window)
+        newWindow.title('LEDs')
+        LedGridRow.headers(newWindow)
+        for i in range(NUMBER_OF_ROWS):
+            led_grid_rows.append(LedGridRow(newWindow, i))
+           
+    def all_leds_on():
+        """ Responds to a menu click to tirn on all LEDs"""
+        request['action'] = 'all LED on'
+
+    def all_leds_off():
+        """ Responds to a menu click to tirn off all LEDs"""
+        request['action'] = 'all LED off'
+
 
     def headers(win):
-        ttk.Label(win, text='#', font=heading_font).grid(column=0, row=0)
-        ttk.Label(win, text='ID', width=5, font=heading_font).grid(column=1, row=0)
-        ttk.Label(win, text='Off servos', width=20, font=heading_font).grid(column=2, row=0)
-        ttk.Label(win, text='On servos', width=20, font=heading_font).grid(column=3, row=0)
+        """ Set the first row. """
+        ttk.Label(win, text='#', font=window.heading_font).grid(column=0, row=0)
+        ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
+        ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
+        ttk.Label(win, text='On servos', width=20, font=vheading_font).grid(column=3, row=0)
 
+    def offset_plus_10():
+        if LedGridRow.offset > len(leds) - INCREMENT:
+            print('BAD INPUT: Trying to go beyond end!')
+            return
+        LedGridRow.offset += INCREMENT
+        LedGridRow.set_offset()
+
+    def offset_minus_10():
+        if LedGridRow.offset == 0:
+            print('BAD INPUT: Trying to go beyond start!')
+            return
+        LedGridRow.offset -= INCREMENT
+        LedGridRow.set_offset()
+
+
+    def set_offset():
+        for button in buttons:
+            button.set_widget(None)
+        for row in button_grid_rows:
+            row.update()
 
     def __init__(self, win, row):
         # When creating, the first button is 0
         self.row = row             # The row in the table in the GUI
-        self.lbl_index = ttk.Label(win, text=str(row), font=label_font)
+        self.lbl_index = ttk.Label(win, text=str(row), font=window.label_font)
         self.lbl_index.grid(column=0, row=1 + row, pady=5)
        
-        self.lbl_desc = ttk.Label(win, text='---', width=20, font=label_font)
+        self.lbl_desc = ttk.Label(win, text='---', width=20, font=window.label_font)
         self.lbl_desc.grid(column=1, row=1 + row, sticky='w')
 
-        self.lbl_off_list = ttk.Label(win, text='---', width=20, font=label_font)
+        self.lbl_off_list = ttk.Label(win, text='---', width=20, font=window.label_font)
         self.lbl_off_list.grid(column=2, row=1 + row, sticky='w')
 
-        self.lbl_on_list = ttk.Label(win, text='---', width=20, font=label_font)
+        self.lbl_on_list = ttk.Label(win, text='---', width=20, font=window.label_font)
         self.lbl_on_list.grid(column=3, row=1 + row, sticky='w')
 
         self.btn_on = ttk.Button(win, text="On")
         self.btn_on.grid(column=4, row=1 + row)
-        self.btn_on.bind("<Button-1>", led_on_button_pressed)
+        self.btn_on.bind("<Button-1>", self.led_on_button)
        
         self.btn_off = ttk.Button(win, text="Off")
         self.btn_off.grid(column=5, row=1 + row)
-        self.btn_off.bind("<Button-1>", led_off_button_pressed)
+        self.btn_off.bind("<Button-1>", self.led_off_button)
 
         self.update()
 
@@ -948,14 +1121,14 @@ class TelltaleGridRow():
 
     def update(self):
         """
-        Updates the row for a new telltale (or no telltale) when led_offset changes
+        Updates the row for a new led (or no led) when offset changes
         """
-        if 0 <= (self.row + led_offset) < len(telltales):
-            self.telltale = telltales[self.row + led_offset]
-            self.lbl_index.config(text=str(self.row + led_offset))
-            self.lbl_desc.config(text=self.telltale.id())
-            self.lbl_off_list.config(text=self.telltale.list_off_servos())
-            self.lbl_on_list.config(text=self.telltale.list_on_servos())
+        if 0 <= (self.row + LedGridRow.offset) < len(leds):
+            self.led = leds[self.row + LedGridRow.offset]
+            self.lbl_index.config(text=str(self.row + LedGridRow.offset))
+            self.lbl_desc.config(text=self.led.id())
+            self.lbl_off_list.config(text=self.led.list_servos(False))
+            self.lbl_on_list.config(text=self.led.list_servos(True))
         else:
             self.button = None
             self.lbl_index.config(text='---')
@@ -963,268 +1136,117 @@ class TelltaleGridRow():
             self.lbl_off_list.config(text='---')
             self.lbl_on_list.config(text='---')
 
+    def led_on_button(self, event):
+        request['action'] = 'LED on'
+        request['servo'] = self.led.index
+
+    def led_off_button(self, event):
+        request['action'] = 'LED off'
+        request['servo'] = self.led.index
 
 
-
-# Define some callback functions
-
-def confirm_quit():
-    """
-    Called when exit is selected from the menu or the x clicked in the top-right,
-    this function will ask for confirmation before destroying the window.
-    
-    
-    Checks QUIT_WITHOUT_CONFIRM - when developing the confirmation box is just annoying.
-    """
-    
-    if QUIT_WITHOUT_CONFIRM:
-        window.destroy()
-    else:
-        response = messagebox.askyesno('Exit','Are you sure you want to exit?')
-        if response:
-            window.destroy()
-
-def up_button_pressed(event):
-    """
-    Called when an UP button is clicked,
-    adds 10 degrees to the target angle.
-    """
-    ServoGridRow.find_row(event.widget).up_button()
-
-def down_button_pressed(event):
-    """
-    Called when a DOWN button is clicked,
-    adds 10 degrees to the target angle.
-    """
-    ServoGridRow.find_row(event.widget).down_button()
-
-def on_off_button_pressed(event):
-    """
-    Called when an ON/OFF button is clicked,
-    it changes the state of the servo from off to on or VV.
-    """
-    ServoGridRow.find_row(event.widget).on_off_button()
-
-def show_led_function():
-    """ Responds to a menu click to show the window for LEDs"""
-
-    newWindow = Toplevel(window)
-    newWindow.title('LEDs')
-    TelltaleGridRow.headers(newWindow)
-    for i in range(NUMBER_OF_ROWS):
-        led_grid_rows.append(TelltaleGridRow(newWindow, i))
-       
-def all_led_on_button_pressed():
-    """ Responds to a menu click to tirn on all LEDs"""
-    req['action'] = 'all LED on'
-
-def all_led_off_button_pressed():
-    """ Responds to a menu click to tirn off all LEDs"""
-    req['action'] = 'all LED off'
-
-def led_on_button_pressed(event):
-    index = TelltaleGridRow.find_row(event.widget).row + led_offset
-    req['action'] = 'LED on'
-    req['servo'] = index
-
-def led_off_button_pressed(event):
-    index = TelltaleGridRow.find_row(event.widget).row + led_offset
-    req['action'] = 'LED off'
-    req['servo'] = index
-
-def show_button_function():
-    newWindow = ButtonsWindow(window)
-    newWindow.title('Buttons')
-    ButtonGridRow.headers(newWindow)
-    for i in range(NUMBER_OF_ROWS):
-        button_grid_rows.append(ButtonGridRow(newWindow, i))
-       
-def about_function():
-    messagebox.showinfo("About", "This software was created by Andy Joel for Preston&District MRS, copyright 2024.")
-
-def help_function():
-    messagebox.showinfo("Help", "Each row controls a servo. Switch the point from left to right and back using On/Off.\n\nThe first angle is the target - what the servo is heading for. The second angle is the current value.\n\nUse Up and Down to modify the target angle.\n\nRemember to do File - Save to save your changes before you exit the program.")
-
-def offset_plus_10_function():
-    global servo_offset
-    if servo_offset > len(servos) - 5:
-        print('BAD INPUT: Trying to go beyond end!')
-        return
-    servo_offset += INCREMENT
-    set_grid_offset()
-
-def offset_minus_10_function():
-    global servo_offset
-    if servo_offset == 0:
-        print('BAD INPUT: Trying to go beyond start!')
-        return
-    servo_offset -= INCREMENT
-    set_grid_offset()
-
-def led_offset_plus_10_function():
-    global led_offset
-    if led_offset > len(telltales) - 5:
-        print('BAD INPUT: Trying to go beyond end!')
-        return
-    led_offset += INCREMENT
-    set_led_grid_offset()
-
-def led_offset_minus_10_function():
-    global led_offset
-    if led_offset == 0:
-        print('BAD INPUT: Trying to go beyond start!')
-        return
-    led_offset -= INCREMENT
-    set_led_grid_offset()
-
-def button_offset_plus_10_function():
-    global button_offset
-    if button_offset > len(buttons) - 5:
-        print('BAD INPUT: Trying to go beyond end!')
-        return
-    button_offset += INCREMENT
-    set_button_grid_offset()
-
-def button_offset_minus_10_function():
-    global button_offset
-    if button_offset == 0:
-        print('BAD INPUT: Trying to go beyond start!')
-        return
-    button_offset -= INCREMENT
-    set_button_grid_offset()
-
-def set_grid_offset():
-    # reset widgets in servos
-    for servo in servos:
-        servo.set_widget(None)
+class ServoWindow(tk.Tk):
+    def __init__(self, *args, **kwargs):
         
-    for row in servo_grid_rows:
-        row.update()
+        tk.Tk.__init__(self, *args, **kwargs)  # Note: super() does not work here
+        self.title("P&D MRS ServoMaster")
+        self.protocol('WM_DELETE_WINDOW', self.confirm_quit)
+
+        self.heading_font = font.Font(slant="italic")
+        self.label_font = font.Font()
+
+        self.create_menubar()
+        try:
+            img = tk.PhotoImage(file='servo_icon.png')
+            self.iconphoto(True, img)
+        except tk.TclError:
+            print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
+
+        # The widgets that do the work
+        ServoGridRow.headers(self.heading_font)
+        for i in range(NUMBER_OF_ROWS):
+            servo_grid_rows.append(ServoGridRow(i, self.label_font))
+
+        ttk.Label(text='Cycle count', font=self.heading_font).grid(column=6, row=NUMBER_OF_ROWS + 1)
+        self.count_label = ttk.Label(text='---', font=self.heading_font)
+        self.count_label.grid(column=7, row=NUMBER_OF_ROWS + 1)
 
 
-def set_button_grid_offset():
-    # reset widgets in servos
-    # !!! needs to be converted to buttons!
-    for button in buttons:
-        button.set_widget(None)
+
+    def create_menubar(self):
+        menu_font = font.Font(size=10)
+        menubar = Menu(self)
+        filemenu = Menu(menubar, tearoff=0, font=menu_font)
+        filemenu.add_command(label="Save", command=save, font=menu_font)
+        filemenu.add_separator()
+        filemenu.add_command(label="Exit", command=self.confirm_quit, font=menu_font)
+        menubar.add_cascade(label="File", menu=filemenu, font=menu_font)
+
+        servosmenu = Menu(menubar, tearoff=0)
+        servosmenu.add_command(label="Next " + str(INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
+        servosmenu.add_command(label="Previous " + str(INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="Servos", menu=servosmenu, font=menu_font)
+
+        ledsmenu = Menu(menubar, tearoff=0)
+        ledsmenu.add_command(label="LEDs...", command=LedGridRow.show_leds, font=menu_font)
+        ledsmenu.add_command(label="All on", command=LedGridRow.all_leds_on, font=menu_font)
+        ledsmenu.add_command(label="All off", command=LedGridRow.all_leds_off, font=menu_font)
+        ledsmenu.add_command(label="Next " + str(INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
+        ledsmenu.add_command(label="Previous " + str(INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="LEDs", menu=ledsmenu, font=menu_font)
+
+        buttonsmenu = Menu(menubar, tearoff=0)
+        buttonsmenu.add_command(label="Buttons...", command=ButtonGridRow.show_buttons, font=menu_font)
+        buttonsmenu.add_command(label="Next " + str(INCREMENT), command=ButtonGridRow.offset_plus_10, font=menu_font)
+        buttonsmenu.add_command(label="Previous " + str(INCREMENT), command=ButtonGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="Buttons", menu=buttonsmenu, font=menu_font)
+
+        helpmenu = Menu(menubar, tearoff=0)
+        helpmenu.add_command(label="Help", command=self.help_function, font=menu_font)
+        helpmenu.add_command(label="About...", command=self.about_function, font=menu_font)
+        menubar.add_cascade(label="Help", menu=helpmenu, font=menu_font)
+        self.config(menu=menubar)
+
+    def confirm_quit(self):
+        """
+        Called when exit is selected from the menu or the x clicked in the top-right,
+        this function will ask for confirmation before destroying the window.
         
-    for i in range(NUMBER_OF_ROWS):
-        if 0 <= (i + button_offset) < len(buttons):
-            servo = servos[i + servo_offset]
-            lbl_index[i].config(text=str(i + servo_offset))
-            lbl_desc[i].config(text=servo.desc)
-            state = 'ON' if servo.turn_on else 'OFF'
-            lbl_state[i].config(text=state)    
-            lbl_target_angle[i].config(text=servo.get_target_angle())
-            lbl_current_angle[i].config(text=servo.get_current_angle())
-            print(f'set widget {i} for servo {i + servo_offset}')
-            servo.set_widget(lbl_current_angle[i])
+        
+        Checks QUIT_WITHOUT_CONFIRM - when developing the confirmation box is just annoying.
+        """
+        if QUIT_WITHOUT_CONFIRM:
+            self.terminate_gui()
         else:
-            lbl_index[i].config(text='---')
-            lbl_desc[i].config(text='---')
-            lbl_state[i].config(text='---')    
-            lbl_target_angle[i].config(text='---')
-            lbl_current_angle[i].config(text='---')
-            print(f'no servo')
+            response = messagebox.askyesno('Exit','Are you sure you want to exit?')
+            if response:
+                self.terminate_gui()
+
+    def terminate_gui(self):
+        # Has to destroy count_label explicitly because the main loop will try to use it otherwise.
+        # Just setting to None is not good enough (and I do not now why).
+        self.count_label.destroy()
+        self.count_label = None
+        self.destroy()
+        print('INFO: GUI terminated.')
+        request['action'] = 'terminate'
+
+    def about_function(self):
+        messagebox.showinfo("About", "This software was created by Andy Joel for Preston&District MRS, copyright 2024.")
+
+    def help_function(self):
+        messagebox.showinfo("Help", "Each row controls a servo. Switch the point from left to right and back using On/Off.\n\nThe first angle is the target - what the servo is heading for. The second angle is the current value.\n\nUse Up and Down to modify the target angle.\n\nRemember to do File - Save to save your changes before you exit the program.")
 
 
 
 
+######################################################################
+# Create the GUI!
 
 
-# Set up arrays of widgets and other variables
-window = None
-heading_font = None
-label_font = None
-menu_font = None
-
-btn_led_on = [None] * len(telltales)
-btn_led_off = [None] * len(telltales)
-
-servo_grid_rows = []
-button_grid_rows = []
-led_grid_rows = []
-
-
-def gui_setup():
-    # Create the UI
-    # First the basics
-    global window, heading_font, label_font, menu_font, count_label
-    
-    window = tk.Tk()
-    window.title("P&D MRS ServoMaster")
-    heading_font = font.Font(slant="italic")
-    label_font = font.Font()
-    menu_font = font.Font(size=14)
-
-    try:
-        img = tk.PhotoImage(file='servo_icon.png')
-        window.iconphoto(True, img)
-    except tk.TclError:
-        print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
-
-    window.protocol('WM_DELETE_WINDOW',confirm_quit)
-
-
-
-    # Now add some menus
-    menubar = Menu(window)
-    filemenu = Menu(menubar, tearoff=0, font=menu_font)
-    filemenu.add_command(label="Save", command=save, font=menu_font)
-    filemenu.add_separator()
-    filemenu.add_command(label="Exit", command=confirm_quit, font=menu_font)
-    menubar.add_cascade(label="File", menu=filemenu, font=menu_font)
-
-    servosmenu = Menu(menubar, tearoff=0)
-    servosmenu.add_command(label="Next " + str(INCREMENT), command=offset_plus_10_function, font=menu_font)
-    servosmenu.add_command(label="Previous " + str(INCREMENT), command=offset_minus_10_function, font=menu_font)
-    menubar.add_cascade(label="Servos", menu=servosmenu, font=menu_font)
-
-    ledsmenu = Menu(menubar, tearoff=0)
-    ledsmenu.add_command(label="LEDs...", command=show_led_function, font=menu_font)
-    ledsmenu.add_command(label="All on", command=all_led_on_button_pressed, font=menu_font)
-    ledsmenu.add_command(label="All off", command=all_led_off_button_pressed, font=menu_font)
-    ledsmenu.add_command(label="Next " + str(INCREMENT), command=led_offset_plus_10_function, font=menu_font)
-    ledsmenu.add_command(label="Previous " + str(INCREMENT), command=led_offset_minus_10_function, font=menu_font)
-    menubar.add_cascade(label="LEDs", menu=ledsmenu, font=menu_font)
-
-    buttonsmenu = Menu(menubar, tearoff=0)
-    buttonsmenu.add_command(label="Buttons...", command=show_button_function, font=menu_font)
-    buttonsmenu.add_command(label="Next " + str(INCREMENT), command=button_offset_plus_10_function, font=menu_font)
-    buttonsmenu.add_command(label="Previous " + str(INCREMENT), command=button_offset_minus_10_function, font=menu_font)
-    menubar.add_cascade(label="Buttons", menu=buttonsmenu, font=menu_font)
-
-    helpmenu = Menu(menubar, tearoff=0)
-    helpmenu.add_command(label="Help", command=help_function, font=menu_font)
-    helpmenu.add_command(label="About...", command=about_function, font=menu_font)
-    menubar.add_cascade(label="Help", menu=helpmenu, font=menu_font)
-
-    window.config(menu=menubar)
-
-
-    # Headings for the main window
-
-
-
-    # The widgets that do the work
-    ServoGridRow.headers()
-    for i in range(NUMBER_OF_ROWS):
-        servo_grid_rows.append(ServoGridRow(i))
-
-    ttk.Label(text='Cycle count', font=heading_font).grid(column=6, row=NUMBER_OF_ROWS + 1)
-    count_label = ttk.Label(text='---', font=heading_font)
-    count_label.grid(column=7, row=NUMBER_OF_ROWS + 1)
-
-
-    # Set it going
-    window.mainloop()
 
 if len(sys.argv) > 1 and sys.argv[1] == 'headless':
    print('Running headless. type "x" and press ENTER to exit.')
 else:
-    gui_setup()
-    # This will run when the GUI is exited
-    print('Bye!')
-    req['action'] = 'terminate'
-    time.sleep(0.1)
-    exit()
+    window = ServoWindow()
+    window.mainloop()
