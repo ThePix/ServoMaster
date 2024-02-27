@@ -18,6 +18,7 @@ NUMBER_OF_ROWS = 10             # Show this number of rows in the GUI
 INCREMENT = 5                   # Jump this number of rows in the GUI
 DESC_WIDTH = 24                 # The description for servos can be this long
 ANGLE_ADJUST = 10               # Up/down buttons change the angle this much
+SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
 
 
 #################################################################################
@@ -28,7 +29,6 @@ import re
 import sys
 from threading import Thread
 
-
 if ON_LINE:
     # Imports for I2C
     import board
@@ -37,11 +37,13 @@ if ON_LINE:
     import I2C_LCD_driver
     from adafruit_character_lcd.character_lcd_i2c import Character_LCD_I2C
     from adafruit_servokit import ServoKit
+    import INA219.py
 
 # Imorts for GUI
 import tkinter as tk
 import tkinter.ttk as ttk
-from tkinter import font, Menu, messagebox, PhotoImage, Toplevel, Scrollbar, TclError, TclError
+from tkinter import font, Menu, messagebox, PhotoImage, Toplevel, Scrollbar, TclError
+from PIL import Image, ImageTk
 
 
 
@@ -480,12 +482,24 @@ def save():
     try:
         with open('servo.txt', 'w', encoding="utf-8") as f:
             # Save the boards
-            for servo_board in servo_boards:
-                f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
-            for io_board in io_boards:
-                f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
-            for lcd_board in lcd_boards:
-                f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
+            if ON_LINE:
+                for servo_board in servo_boards:
+                    f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
+                for io_board in io_boards:
+                    f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
+                for lcd_board in lcd_boards:
+                    f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
+                for usp_board in ups_boards:
+                    f.write(f'UPS{hex(usp_board.addr)}\n')
+            else:
+                for servo_board in servo_boards:
+                    f.write(f'S{hex(servo_board.addr)}\n')
+                for io_board in io_boards:
+                    f.write(f'IO{hex(io_board.addr)}\n')
+                for lcd_board in lcd_boards:
+                    f.write(f'LCD{hex(lcd_board.addr)}\n')
+                for usp_board in ups_boards:
+                    f.write(f'UPS{hex(usp_board.addr)}\n')
 
             # Now save the servos and related data
             for servo in servos:
@@ -502,7 +516,21 @@ def save():
 if ON_LINE:
     i2c_devices = i2c.scan()
     print("INFO: Found I2C devices:", [hex(device_address) for device_address in i2c_devices])
+else:
+    print("WARNING: Running in off-line mode, not connecting to I2C bus.")
 
+
+class fake_board:
+    def __init__(self, addr):
+        self.addr = addr
+
+class fake_usp_board:
+    def __init__(self, addr):
+        self.addr = addr
+    def getBusVoltage_V(self):
+        return 7.368
+    def getCurrent_mA(self):
+        return -327.7
 
 def load_device(line):
     """
@@ -512,29 +540,39 @@ def load_device(line):
     
     This is in a function of its own so we can readily exit it it a problem is encountered.
     """
-    if not ON_LINE:
-        return
-        
     md = re.match('([A-Z]+)(?:0x|)([0-9a-f]+)', line)
     if not md:
         print('ERROR: Badly formatted line: ' + line)
         return
    
     address = int(md.group(2), 16)
-    if not address in i2c_devices:
+    if ON_LINE and not address in i2c_devices:
         print('ERROR: Device not found: ' + line)
         return False                
-    match md.group(1):
-        case 'S':
-            servo_boards.append(ServoKit(channels=16, address=address))
-        case 'IO':
-            io_boards.append(adafruit_pcf8575.PCF8575(i2c, address))
-        case 'LCD':
-            lcd_boards.append(I2C_LCD_driver.lcd())
-        case 'UPS':
-            ups_boards.append(ServoKit(channels=16, address=address)) # !!!
-        case _:
-            print('ERROR: Device code not recognised: ' + line)
+    if ON_LINE:
+        match md.group(1):
+            case 'S':
+                servo_boards.append(ServoKit(channels=16, address=address))
+            case 'IO':
+                io_boards.append(adafruit_pcf8575.PCF8575(i2c, address))
+            case 'LCD':
+                lcd_boards.append(I2C_LCD_driver.lcd())
+            case 'UPS':
+                ups_boards.append(INA219(addr=address))
+            case _:
+                print('ERROR: Device code not recognised: ' + line)
+    else:
+        match md.group(1):
+            case 'S':
+                servo_boards.append(fake_board(address))
+            case 'IO':
+                io_boards.append(fake_board(address))
+            case 'LCD':
+                lcd_boards.append(fake_board(address))
+            case 'UPS':
+                ups_boards.append(fake_usp_board(address))
+            case _:
+                print('ERROR: Device code not recognised: ' + line)
 
 try:
     """
@@ -580,7 +618,7 @@ for servo in servos:
 # COMMAND LINE
 
 # For testing it is good to be able to type requests to set the servo, and this function handles that
-# It runs in its own thread, and sets the global variable "req" when a request is made
+# It runs in its own thread, and sets the global variable "request" when a request is made
 patterns = [
     re.compile("^(exit|quit|x)$", re.IGNORECASE),
     re.compile("^(\\d+) (\\d+)$"),
@@ -625,7 +663,6 @@ def input_loop():
             request['servo'] = int(mds[5].group(1))
         else:
             print("Input commands in the form x y")
-            print(req)
    
 
 
@@ -666,6 +703,29 @@ def main_loop():
         #else:
         #    print('.', end='')
 
+
+        # HANDLE UPS
+        # Only do this every 100 loops; it is not going to change much
+        # Get values from device
+        # If below SHUTDOWN_AT% and draining, shutdown
+        # Otherwise report to GUI
+        if loop_count % 100 == 0 and len(ups_boards) > 0:
+            bus_voltage = ups_boards[0].getBusVoltage_V()             # voltage on V- (load side)
+            # shunt_voltage = ups_boards[0].getShuntVoltage_mV() / 1000 # voltage between V+ and V- across the shunt
+            current = ups_boards[0].getCurrent_mA()                   # current in mA
+            # power = ups_boards[0].getPower_W()                        # power in W
+            percent_remaining = (bus_voltage - 6)/2.4*100
+            if percent_remaining < SHUTDOWN_AT and current < 0:
+                print("Battery supply about to expire - shutting down.")
+                os.system("sudo shutdown -h now")
+            if window and window.power_label:
+                try:
+                    if current < 0:
+                        window.power_label.config(text=f'On batteries, {round(percent_remaining, 2)}% remaining')
+                    else:
+                        window.power_label.config(text=f'Good; batteries at {round(percent_remaining, 2)}%.')
+                except tk.TclError:
+                    print('*')
 
         # HANDLE INPUTS
         for button in buttons:
@@ -727,6 +787,10 @@ def main_loop():
                 moving_flag = True
 
         time.sleep(0.001)
+        
+        
+        # HANDLE HARD BREAK
+        # Connect pins 39 and 40 (Ground and GPIO21) to exit if all else fails
 
     print("INFO: Main loop terminated.")
 
@@ -816,9 +880,9 @@ class ServoGridRow():
         for row in servo_grid_rows:
             row.update()
 
-    def headers(font):
+    def headers(img, font):
         """ Set the first row. """
-        ttk.Label(text='#', width=5, font=font).grid(column=0, row=0)
+        ttk.Label(width=5, font=font, image=img).grid(column=0, row=0)
         ttk.Label(text='ID', width=7, font=font).grid(column=1, row=0)
         ttk.Label(text='Description', width=DESC_WIDTH, font=font).grid(column=2, row=0)
         ttk.Label(text='Switch', font=font).grid(column=3, row=0)
@@ -829,14 +893,14 @@ class ServoGridRow():
     def __init__(self, row, font):
         # When creating, the first servo is 0
         self.row = row             # The row in the table in the GUI
-        self.servo = servos[row]   # The current servo - but can change
+        #self.servo = servos[row]   # The current servo - but can change
         self.lbl_index = ttk.Label(text=str(row), font=font)
         self.lbl_index.grid(column=0, row=1 + row, pady=5)
        
-        self.lbl_id = ttk.Label(text=self.servo.id(), width=7, font=font)
+        self.lbl_id = ttk.Label(text='---', width=7, font=font)
         self.lbl_id.grid(column=1, row=1 + row)
 
-        self.lbl_desc = ttk.Label(text=self.servo.desc, width=DESC_WIDTH, font=font)
+        self.lbl_desc = ttk.Label(text='---', width=DESC_WIDTH, font=font)
         self.lbl_desc.grid(column=2, row=1 + row)
 
         self.btn_on_off = ttk.Button(text="On/Off")
@@ -855,12 +919,14 @@ class ServoGridRow():
         self.btn_down.grid(column=6, row=1 + row)
         self.btn_down.bind("<Button-1>", self.down_button)
        
-        self.lbl_target_angle = ttk.Label(text=self.servo.get_target_angle(), width=10, font=font)
+        self.lbl_target_angle = ttk.Label(text='---', width=10, font=font)
         self.lbl_target_angle.grid(column=7, row=1 + row)
        
-        self.lbl_current_angle = ttk.Label(text=self.servo.get_current_angle(), width=10, font=font)
+        self.lbl_current_angle = ttk.Label(text='---', width=10, font=font)
         self.lbl_current_angle.grid(column=8, row=1 + row)
-        self.servo.set_widget(self.lbl_current_angle)
+        #self.servo.set_widget(self.lbl_current_angle)
+        
+        self.update()
 
     def update(self):
         """
@@ -964,7 +1030,7 @@ class ButtonGridRow():
 
     def headers(win):
         """ Set the first row. """
-        ttk.Label(win, text='#', font=window.heading_font).grid(column=0, row=0)
+        ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
         ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
         ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
         ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
@@ -1066,10 +1132,10 @@ class LedGridRow():
 
     def headers(win):
         """ Set the first row. """
-        ttk.Label(win, text='#', font=window.heading_font).grid(column=0, row=0)
+        ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
         ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
         ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
-        ttk.Label(win, text='On servos', width=20, font=vheading_font).grid(column=3, row=0)
+        ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
 
     def offset_plus_10():
         if LedGridRow.offset > len(leds) - INCREMENT:
@@ -1156,18 +1222,28 @@ class ServoWindow(tk.Tk):
         self.label_font = font.Font()
 
         self.create_menubar()
+        
+        """
         try:
             img = tk.PhotoImage(file='servo_icon.png')
             self.iconphoto(True, img)
         except tk.TclError:
             print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
+        """
+        
+        self.img = Image.open("servo_icon.png")
+        self.img = ImageTk.PhotoImage(self.img)
 
         # The widgets that do the work
-        ServoGridRow.headers(self.heading_font)
+        ServoGridRow.headers(self.img, self.heading_font)
         for i in range(NUMBER_OF_ROWS):
             servo_grid_rows.append(ServoGridRow(i, self.label_font))
 
-        ttk.Label(text='Cycle count', font=self.heading_font).grid(column=6, row=NUMBER_OF_ROWS + 1)
+        ttk.Label(text='Power supply:', font=self.heading_font).grid(column=1, row=NUMBER_OF_ROWS + 1)
+        self.power_label = ttk.Label(text='---', font=self.heading_font)
+        self.power_label.grid(column=2, row=NUMBER_OF_ROWS + 1)
+
+        ttk.Label(text='Cycle count:', font=self.heading_font).grid(column=6, row=NUMBER_OF_ROWS + 1)
         self.count_label = ttk.Label(text='---', font=self.heading_font)
         self.count_label.grid(column=7, row=NUMBER_OF_ROWS + 1)
 
@@ -1225,6 +1301,8 @@ class ServoWindow(tk.Tk):
     def terminate_gui(self):
         # Has to destroy count_label explicitly because the main loop will try to use it otherwise.
         # Just setting to None is not good enough (and I do not now why).
+        self.power_label.destroy()
+        self.power_label = None
         self.count_label.destroy()
         self.count_label = None
         self.destroy()
@@ -1245,8 +1323,8 @@ class ServoWindow(tk.Tk):
 
 
 
-if len(sys.argv) > 1 and sys.argv[1] == 'headless':
-   print('Running headless. type "x" and press ENTER to exit.')
+if len(sys.argv) > 1 and sys.argv[1]:
+   print('Running headless. Type "x" and press ENTER to exit.')
 else:
     window = ServoWindow()
     window.mainloop()
