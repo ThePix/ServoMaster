@@ -27,6 +27,7 @@ SLEEP = 0.001                   # Sleep for this many seconds at the end of each
 import time
 import re
 import sys
+import random
 from threading import Thread
 
 if ON_LINE:
@@ -533,6 +534,8 @@ class Flasher:
 class RandomFlasher(Flasher):
     def __init__(self, _board_no, _pin_no, _start, _on, _off):
         super().__init__(_board_no, _pin_no, _start, _on, _off)
+        self.loop_on = _on
+        self.loop_off = _off
 
     def check(self, t):
         # to do!!!
@@ -543,16 +546,23 @@ class RandomFlasher(Flasher):
             return
         if not self.loop_on:
            self.loop_on = self.vary(self.on)
-           self.loop_off = self.vary(self.off)
+           #self.loop_off = self.vary(self.off)
+           self.cycle_count = 0
         t2 = (t - self.start) % (self.loop_on + self.loop_off)
         #print(t2)
-        if t2 < self.on:
+        if t2 < self.loop_on:
             if not self.state:
                 self.set(True)
+                self.loop_off = self.vary(self.off)
         else:
             if self.state:
                 self.set(False)
+                self.loop_on = self.vary(self.on)
 
+
+    def vary(self, n):
+        m = round(n/2)
+        return m + random.randint(0, m) + random.randint(0, m)
 
     def type_letter(self):
         return 'r'
@@ -1377,7 +1387,8 @@ class ServoWindow(tk.Tk):
         try:
             self.img = Image.open("servo_icon.png")
             self.img = ImageTk.PhotoImage(self.img)
-        except tk.TclError:
+        except FileNotFoundError:
+            self.img = None
             print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
 
         # The widgets that do the work
