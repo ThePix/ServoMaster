@@ -38,7 +38,7 @@ if ON_LINE:
     import I2C_LCD_driver
     from adafruit_character_lcd.character_lcd_i2c import Character_LCD_I2C
     from adafruit_servokit import ServoKit
-    import INA219.py
+    import INA219
 
 # Imorts for GUI
 import tkinter as tk
@@ -902,7 +902,8 @@ def main_loop():
             else:
                 leds[request['servo']].set(True)
                 if REPORT_SERVO_SWITCHING:
-                    print(f'INFO: LED on {leds[request['servo']].id()}')
+                    ident = leds[request['servo']].id()
+                    print(f'INFO: LED on {ident}')
             request['action'] = False
         if request['action'] == 'LED off':
             if request['servo'] >= len(leds):
@@ -910,7 +911,8 @@ def main_loop():
             else:
                 leds[request['servo']].set(False)
                 if REPORT_SERVO_SWITCHING:
-                    print(f'INFO: LED off {leds[request['servo']].id()}')
+                    ident = leds[request['servo']].id()
+                    print(f'INFO: LED off {ident}')
             request['action'] = False
         if request['action'] == 'all LED on':
             for led in leds:
