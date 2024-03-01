@@ -19,7 +19,7 @@ INCREMENT = 5                   # Jump this number of rows in the GUI
 DESC_WIDTH = 24                 # The description for servos can be this long
 ANGLE_ADJUST = 10               # Up/down buttons change the angle this much
 SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
-
+SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
 
 #################################################################################
 # PYTHON IMPORTS
@@ -441,9 +441,130 @@ class PButton(IOPin):
 
 
 #################################################################################
+
+class Flasher:
+    """
+    Represents a flashing LED
+    """
+    count = 0
+
+    def create(s):
+        """
+        Adds an I/O pin object, given a string
+        The string should consist of a "l" (for LED) or "b" (for button) to identify it as such
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        """
+        md = re.match('(f|r) (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+)', s)
+        if not md:
+            raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
+        # get the data from the regex match
+        board_no = int(md.group(2))
+        pin_no = int(md.group(3))
+        start = int(md.group(4))
+        on = int(md.group(5))
+        off = int(md.group(6))
+        # is there already an item of the wrong sort assigned there? if so, that is an error
+        if IOPin.find_in_list(leds, board_no, pin_no):
+            raise Exception(f'ERROR: Trying to set board/pin for flasher, but an indicator LED is already assigned: {board_no}.{pin_no}')
+        if IOPin.find_in_list(buttons, board_no, pin_no):
+            raise Exception(f'ERROR: Trying to set board/pin for flasher, but a button is already assigned: {board_no}.{pin_no}')
+        if IOPin.find_in_list(flashers, board_no, pin_no):
+            raise Exception(f'ERROR: Trying to set board/pin for flasher, but another flashing LED is already assigned: {board_no}.{pin_no}')
+        if md.group(1) == 'f':
+            flashers.append(Flasher(board_no, pin_no, start, on, off))
+        else:
+            flashers.append(RandomFlasher(board_no, pin_no, start, on, off))
+
+
+    def __init__(self, _board_no, _pin_no, _start, _on, _off):
+        """
+        Constructor.
+        """
+        self.board_no = _board_no
+        self.pin_no = _pin_no
+        self.start = _start
+        self.on = _on
+        self.off = _off
+        self.state = False
+        if ON_LINE:
+            self.led = io_boards[self.board_no].get_pin(self.pin_no)
+            self.led.switch_to_output(value=True)
+        self.index = Flasher.count
+        Flasher.count += 1
+       
+    def id(self):
+        """ The ID is the 'board.pin'. """
+        return f'{self.board_no}.{self.pin_no}'
+
+    def type_letter(self):
+        return 'f'
+
+    def set(self, value):
+        """ Sets the LED on or off. """
+        #print(f'Flasher {self.id()} setting to {value}')
+        self.state = value
+        if ON_LINE:
+            self.led.value = not value
+
+    def check(self, t):
+        #print(t)
+        if t < self.start:
+            # should be start anyway
+            #print('start')
+            return
+        t2 = (t - self.start) % (self.on + self.off)
+        #print(t2)
+        if t2 < self.on:
+            if not self.state:
+                self.set(True)
+        else:
+            if self.state:
+                self.set(False)
+
+    def write_to_file(self, f):
+        """ Writes the flasher to file. """
+        f.write(f'\n{self.type_letter()} {self.board_no}.{self.pin_no}, {self.start}, {self.on}, {self.off}')
+       
+
+
+
+class RandomFlasher(Flasher):
+    def __init__(self, _board_no, _pin_no, _start, _on, _off):
+        super().__init__(_board_no, _pin_no, _start, _on, _off)
+
+    def check(self, t):
+        # to do!!!
+        #print(t)
+        if t < self.start:
+            # should be start anyway
+            #print('start')
+            return
+        if not self.loop_on:
+           self.loop_on = self.vary(self.on)
+           self.loop_off = self.vary(self.off)
+        t2 = (t - self.start) % (self.loop_on + self.loop_off)
+        #print(t2)
+        if t2 < self.on:
+            if not self.state:
+                self.set(True)
+        else:
+            if self.state:
+                self.set(False)
+
+
+    def type_letter(self):
+        return 'r'
+
+
+
+
+#################################################################################
 # INITIALISING
 
-previous_time = time.time()
+start_time = time.time()
+previous_time = start_time
 
 if ON_LINE:
     i2c = board.I2C()  # uses board.SCL and board.SDA
@@ -460,6 +581,7 @@ def print_lcd(n, s):
 servos = []
 leds = []
 buttons = []
+flashers = []
 
 request = { 'action':False, 'testing':True}  # User input is done by changing this to request a change
 loop_count = 0
@@ -504,6 +626,11 @@ def save():
             # Now save the servos and related data
             for servo in servos:
                 servo.write_to_file(f)
+
+            # Now save the servos and related data
+            for flasher in flashers:
+                flasher.write_to_file(f)
+                
         print("INFO: Save successful")
     except Exception as err:
         print('ERROR: Failed to save the configuration file, servo.txt.')
@@ -589,6 +716,8 @@ try:
                 PButton.create(line, servo)
             elif line[0:1] == 'l':
                 Led.create(line, servo)
+            elif line[0:1] == 'f' or line[0:1] == 'r':
+                Flasher.create(line)
             else:
                 load_device(line)
 except FileNotFoundError:
@@ -606,8 +735,9 @@ print_lcd(1, "Hello P&D MRS!")
 print(f"INFO: Found {len(ups_boards)} UPS board(s).")
 
 print(f"INFO: Found {len(servos)} servo(s).")
-print(f"INFO: Found {len(leds)} LED(s).")
 print(f"INFO: Found {len(buttons)} button(s).")
+print(f"INFO: Found {len(leds)} indicator LED(s).")
+print(f"INFO: Found {len(flashers)} flashing LED(s).")
 for servo in servos:
     servo.sanity_check()
 
@@ -703,7 +833,8 @@ def main_loop():
         #else:
         #    print('.', end='')
 
-
+        #print('one')
+        
         # HANDLE UPS
         # Only do this every 100 loops; it is not going to change much
         # Get values from device
@@ -726,10 +857,12 @@ def main_loop():
                         window.power_label.config(text=f'Good; batteries at {round(percent_remaining, 2)}%.')
                 except tk.TclError:
                     print('*')
+        #print('two')
 
         # HANDLE INPUTS
         for button in buttons:
             button.check_state()
+        #print('three')
            
         # HANDLE INPUT REQUESTS
         if request['action'] == 'angle':
@@ -777,7 +910,16 @@ def main_loop():
             for led in leds:
                 led.set(False)
             request['action'] = False
+        #print('four')
 
+
+        # HANDLE FLASHERS
+        if loop_count % 100 == 10:
+            t = (time.time() - start_time) * 10
+            for flasher in flashers:
+                flasher.check(t)
+
+        #print('five')
 
 
         # HANDLE SERVOS
@@ -785,9 +927,11 @@ def main_loop():
         for servo in servos:
             if servo.adjust(increment):
                 moving_flag = True
+        #print('six')
 
-        time.sleep(0.001)
+        time.sleep(SLEEP)
         
+        #print('seven')
         
         # HANDLE HARD BREAK
         # Connect pins 39 and 40 (Ground and GPIO21) to exit if all else fails
@@ -882,7 +1026,8 @@ class ServoGridRow():
 
     def headers(img, font):
         """ Set the first row. """
-        ttk.Label(width=5, font=font, image=img).grid(column=0, row=0)
+        if img:
+            ttk.Label(width=5, font=font, image=img).grid(column=0, row=0)
         ttk.Label(text='ID', width=7, font=font).grid(column=1, row=0)
         ttk.Label(text='Description', width=DESC_WIDTH, font=font).grid(column=2, row=0)
         ttk.Label(text='Switch', font=font).grid(column=3, row=0)
@@ -1030,7 +1175,8 @@ class ButtonGridRow():
 
     def headers(win):
         """ Set the first row. """
-        ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
+        if img:
+            ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
         ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
         ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
         ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
@@ -1132,7 +1278,8 @@ class LedGridRow():
 
     def headers(win):
         """ Set the first row. """
-        ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
+        if img:
+            ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
         ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
         ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
         ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
@@ -1215,7 +1362,11 @@ class ServoWindow(tk.Tk):
     def __init__(self, *args, **kwargs):
         
         tk.Tk.__init__(self, *args, **kwargs)  # Note: super() does not work here
-        self.title("P&D MRS ServoMaster")
+        if ON_LINE:
+            self.title("P&D MRS ServoMaster")
+        else:
+            self.title("P&D MRS ServoMaster (off-line)")
+            
         self.protocol('WM_DELETE_WINDOW', self.confirm_quit)
 
         self.heading_font = font.Font(slant="italic")
@@ -1223,16 +1374,11 @@ class ServoWindow(tk.Tk):
 
         self.create_menubar()
         
-        """
         try:
-            img = tk.PhotoImage(file='servo_icon.png')
-            self.iconphoto(True, img)
+            self.img = Image.open("servo_icon.png")
+            self.img = ImageTk.PhotoImage(self.img)
         except tk.TclError:
             print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
-        """
-        
-        self.img = Image.open("servo_icon.png")
-        self.img = ImageTk.PhotoImage(self.img)
 
         # The widgets that do the work
         ServoGridRow.headers(self.img, self.heading_font)
