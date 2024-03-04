@@ -28,6 +28,7 @@ import time
 import re
 import sys
 import random
+import math
 from threading import Thread
 
 if ON_LINE:
@@ -445,7 +446,8 @@ class PButton(IOPin):
 
 class Flasher:
     """
-    Represents a flashing LED
+    Represents a flashing LED. The flashing is defined by an initial delay, an on time and an off time. The length of the cycle is on+off.
+    Times are in tenths of a second.
     """
     count = 0
 
@@ -510,6 +512,10 @@ class Flasher:
             self.led.value = not value
 
     def check(self, t):
+        """
+        Method to run every cycle. T is expected to be a float,
+        the number of tenths of a second since the program started.
+        """
         #print(t)
         if t < self.start:
             # should be start anyway
@@ -530,23 +536,28 @@ class Flasher:
        
 
 
+#################################################################################
 
 class RandomFlasher(Flasher):
+    """
+    Sub-class of Flashes that gives random flashing, i.e., both on and
+    off are randomly determined each cycle, but will average out to the give values
+    more or less.
+    """
+
+
     def __init__(self, _board_no, _pin_no, _start, _on, _off):
         super().__init__(_board_no, _pin_no, _start, _on, _off)
         self.loop_on = _on
         self.loop_off = _off
 
     def check(self, t):
-        # to do!!!
-        #print(t)
         if t < self.start:
             # should be start anyway
-            #print('start')
             return
         if not self.loop_on:
+           # is this used?
            self.loop_on = self.vary(self.on)
-           #self.loop_off = self.vary(self.off)
            self.cycle_count = 0
         t2 = (t - self.start) % (self.loop_on + self.loop_off)
         #print(t2)
@@ -567,6 +578,73 @@ class RandomFlasher(Flasher):
     def type_letter(self):
         return 'r'
 
+
+
+
+#################################################################################
+
+class PatternFlasher(Flasher):
+    """
+    Sub-class of Flashes that gives a complex flasdhing pattern.
+    """
+    def create(s):
+        """
+        Adds an I/O pin object, given a string
+        The string should consist of a "l" (for LED) or "b" (for button) to identify it as such
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        """
+        md = re.match('p (\\d+)\\.(\\d+),? (\\d+),? ([\\.\\*]+)', s)
+        if not md:
+            raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
+        # get the data from the regex match
+        board_no = int(md.group(1))
+        pin_no = int(md.group(2))
+        start = int(md.group(3))
+        pattern = md.group(4)
+        # is there already an item of the wrong sort assigned there? if so, that is an error
+        if IOPin.find_in_list(leds, board_no, pin_no):
+            raise Exception(f'ERROR: Trying to set board/pin for flasher, but an indicator LED is already assigned: {board_no}.{pin_no}')
+        if IOPin.find_in_list(buttons, board_no, pin_no):
+            raise Exception(f'ERROR: Trying to set board/pin for flasher, but a button is already assigned: {board_no}.{pin_no}')
+        if IOPin.find_in_list(flashers, board_no, pin_no):
+            raise Exception(f'ERROR: Trying to set board/pin for flasher, but another flashing LED is already assigned: {board_no}.{pin_no}')
+        flashers.append(PatternFlasher(board_no, pin_no, start, pattern))
+
+
+    def __init__(self, _board_no, _pin_no, _start, _pattern):
+        super().__init__(_board_no, _pin_no, _start, 0, 0)
+        self.pattern = []
+        for c in _pattern:
+            self.pattern.append(c == '*')
+
+    def check(self, t):
+        # to do!!!
+        #print(t)
+        if t < self.start:
+            # should be start anyway
+            #print('start')
+            return
+        t2 = math.floor((t - self.start) % len(self.pattern))
+        desired = self.pattern[t2]
+        if self.state != desired:
+            self.set(desired)
+
+
+    def vary(self, n):
+        m = round(n/2)
+        return m + random.randint(0, m) + random.randint(0, m)
+
+    def type_letter(self):
+        return 'r'
+
+    def write_to_file(self, f):
+        """ Writes the flasher to file. """
+        pattern = ''
+        for flag in self.pattern:
+            pattern += ('*' if flag else '.')
+        f.write(f'\np {self.board_no}.{self.pin_no}, {self.start}, {pattern}')
 
 
 
@@ -728,6 +806,8 @@ try:
                 Led.create(line, servo)
             elif line[0:1] == 'f' or line[0:1] == 'r':
                 Flasher.create(line)
+            elif line[0:1] == 'p':
+                PatternFlasher.create(line)
             else:
                 load_device(line)
 except FileNotFoundError:
