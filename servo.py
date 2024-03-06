@@ -20,6 +20,7 @@ DESC_WIDTH = 24                 # The description for servos can be this long
 ANGLE_ADJUST = 10               # Up/down buttons change the angle this much
 SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
 SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
+START_CENTRED = True            # Servos go to the off position at turn on unless this is true
 
 #################################################################################
 # PYTHON IMPORTS
@@ -49,6 +50,9 @@ from PIL import Image, ImageTk
 
 
 
+HEADLESS = len(sys.argv) > 1 and sys.argv[1] 
+
+
 #################################################################################
 
 class Servo:
@@ -69,19 +73,20 @@ class Servo:
            the address - the board number, a dot and the pin number
            the speed
            the off angle
+           the centre angle
            the on angle
            the descriptor
         """
-        md = re.match('s (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+),? ?(.*)', s)
+        md = re.match('s (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+),? (\\d+),? ?(.*)', s)
         if md:
-            servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), md.group(6))
+            servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), md.group(7))
             lst.append(servo)
             return servo
         else:
             print('ERROR: Badly formatted line for servo: ' + s)
             return None
    
-    def __init__(self, _board_no, _pin_no, _speed, _off_angle, _on_angle, _desc=None):
+    def __init__(self, _board_no, _pin_no, _speed, _off_angle, _centre_angle, _on_angle, _desc=None):
         """
         Constructor. As well as setting the given values, also creates a servo object from the I2C
         board.        
@@ -90,8 +95,15 @@ class Servo:
         self.pin_no = _pin_no
         self.speed = _speed
         self.off_angle = _off_angle * 100
-        self.target_angle = _off_angle * 100
-        self.current_angle = _off_angle * 100
+        self.centre_angle = _centre_angle * 100
+        if START_CENTRED:
+            self.target_angle = _centre_angle * 100
+            self.current_angle = _centre_angle * 100
+            self.centred = True
+        else:
+            self.target_angle = _off_angle * 100
+            self.current_angle = _off_angle * 100
+            self.centred = False
         self.on_angle = _on_angle * 100
         self.desc = _desc
         self.moving = False
@@ -101,7 +113,7 @@ class Servo:
         self.off_buttons = []
         if ON_LINE:
             self.servo = servo_boards[self.board_no].servo[self.pin_no]
-            self.servo.angle = _off_angle
+            self.servo.angle = self.current_angle
         self.turn_on = False
         self.index = Servo.count
         Servo.count += 1
@@ -112,7 +124,7 @@ class Servo:
 
     def write_to_file(self, f):
         """ Writes not just this servo, but also connected buttons and LEDs. """
-        f.write(f'\ns {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.on_angle / 100)}, {self.desc}\n')
+        f.write(f'\ns {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)}, {self.desc}\n')
         for led in self.on_leds:
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
         for led in self.off_leds:
@@ -162,9 +174,20 @@ class Servo:
         """
         self.target_angle = self.on_angle if _turn_on else self.off_angle
         self.turn_on = _turn_on
+        self.centred = False
         if REPORT_SERVO_SWITCHING:
             state = 'ON' if _turn_on else 'OFF'
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
+        
+    def centre(self):
+        """"
+        Set the target angle to the centre angle, which will cause the servo
+        to move to that angle over a few seconds.
+        """
+        self.target_angle = self.centre_angle
+        self.centred = True
+        if REPORT_SERVO_SWITCHING:
+            print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to centred')
         
     def set_angle(self, angle):
         """"
@@ -853,6 +876,7 @@ def input_loop():
     Gets input from the command line, sets the request object
     for mail loop to deal with.
     """
+    print("INFO: Ready for input at the command line")
     while not request['action'] == 'terminate':
         s = input()
         print("Got: " + s)
@@ -907,6 +931,7 @@ def main_loop():
         previous_time = now_time
         increment = TIME_FACTOR * elapsed
         
+        #"""
         # If the GUI is up, then count_label is a Label object
         # and can be updated with the loop count to show it is going
         # and indicate how fast. Cap at a million so no chance of overflow.
@@ -922,6 +947,7 @@ def main_loop():
                 loop_count = 0
         #else:
         #    print('.', end='')
+        #"""
 
         #print('one')
         
@@ -953,6 +979,7 @@ def main_loop():
         for button in buttons:
             button.check_state()
         #print('three')
+        
            
         # HANDLE INPUT REQUESTS
         if request['action'] == 'angle':
@@ -1038,17 +1065,18 @@ def main_loop():
 # We have three threads, one that does the work, for for the GUI,
 # one for the command line.
 
-# The command line is a daemon thread - no need to shutdown gracefully
-input_thread = Thread(target = input_loop)
-input_thread.daemon = True
-input_thread.start()
+# The command line and main loop are daemon threads - no need to shutdown gracefully
+# and should ensure they do stop
+if HEADLESS:
+    input_thread = Thread(target = input_loop)
+    input_thread.daemon = True
+    input_thread.start()
 
-# The main loop is not a daemon thread, it might be in the middle of doing stuff.
-# Not sure if this is an issue, but just in case!
-# It has to be stopped by setting request['action'] = 'terminate'
-Thread(target = main_loop).start()  #!!!!!
+main_thread = Thread(target = main_loop)
+main_thread.daemon = True
+main_thread.start()
 
-# The GUI is done in the defaut thread; no need to define a new one
+# The GUI is done in the default thread; no need to define a new one
 
 
 
@@ -1096,6 +1124,12 @@ class ServoGridRow():
 
     offset = 0
 
+    def centre_all():
+        for servo in servos:
+            servo.centre()
+        for row in servo_grid_rows:
+            row.update()
+    
     def offset_plus_10():
         if ServoGridRow.offset > len(servos) - INCREMENT:
             print('BAD INPUT: Trying to go beyond end!')
@@ -1175,7 +1209,13 @@ class ServoGridRow():
             self.lbl_id.config(text=self.servo.id())
             self.lbl_desc.config(text=self.servo.desc)
             state = 'ON' if self.servo.turn_on else 'OFF'
-            self.lbl_state.config(text=state)    
+            if servo.centred:
+                self.lbl_state.config(text='CENTRE', foreground='blue', background='silver')
+            elif self.servo.turn_on:
+                self.lbl_state.config(text='ON', foreground='white', background='black')
+            else:
+                self.lbl_state.config(text='OFF', foreground='black', background='white')
+            
             self.lbl_target_angle.config(text=self.servo.get_target_angle())
             self.lbl_current_angle.config(text=self.servo.get_current_angle())
             #print(f'set widget {self.row} for servo {self.servo.index}')
@@ -1196,12 +1236,12 @@ class ServoGridRow():
             return
 
         if self.servo.turn_on:
-            self.lbl_state.config(text='OFF')
+            self.lbl_state.config(text='OFF', foreground='black', background='white')
             self.lbl_target_angle.config(text=self.servo.get_off_angle())
             request['action'] = 'off'
             request['servo'] = self.servo.index
         else:
-            self.lbl_state.config(text='ON')
+            self.lbl_state.config(text='ON', foreground='white', background='black')
             self.lbl_target_angle.config(text=self.servo.get_on_angle())
             request['action'] = 'on'
             request['servo'] = self.servo.index
@@ -1212,7 +1252,13 @@ class ServoGridRow():
             print('No servo at row')
             return
 
-        if self.servo.turn_on:
+        if self.servo.centred:
+            if self.servo.centre_angle > 17000 - ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go over 170')
+                return
+            self.servo.centre_angle += ANGLE_ADJUST * 100
+           
+        elif self.servo.turn_on:
             if self.servo.on_angle > 17000 - ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go over 170')
                 return
@@ -1233,7 +1279,13 @@ class ServoGridRow():
             print('No servo at row')
             return
 
-        if self.servo.turn_on:
+        if self.servo.centred:
+            if self.servo.centre_angle < 1000 + ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go under 10')
+                return
+            self.servo.centre_angle -= ANGLE_ADJUST * 100
+           
+        elif self.servo.turn_on:
             if self.servo.on_angle < 1000 + ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go under 10')
                 return
@@ -1267,8 +1319,6 @@ class ButtonGridRow():
 
     def headers(win):
         """ Set the first row. """
-        if img:
-            ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
         ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
         ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
         ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
@@ -1370,8 +1420,6 @@ class LedGridRow():
 
     def headers(win):
         """ Set the first row. """
-        if img:
-            ttk.Label(win, image=window.img, font=window.heading_font).grid(column=0, row=0)
         ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
         ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
         ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
@@ -1451,6 +1499,12 @@ class LedGridRow():
 
 
 class ServoWindow(tk.Tk):
+    """
+    Defines instances of a top-level window, whichis used to display servos
+    in a grid. Buttons on the grid allow interaction with individual servos,
+    while a menu bar gives other options.
+    Content of each grid row is done in ServoGridRow.    
+    """
     def __init__(self, *args, **kwargs):
         
         tk.Tk.__init__(self, *args, **kwargs)  # Note: super() does not work here
@@ -1486,9 +1540,8 @@ class ServoWindow(tk.Tk):
         self.count_label = ttk.Label(text='---', font=self.heading_font)
         self.count_label.grid(column=7, row=NUMBER_OF_ROWS + 1)
 
-
-
     def create_menubar(self):
+        # Doing this in its own function just to keep it isolated
         menu_font = font.Font(size=10)
         menubar = Menu(self)
         filemenu = Menu(menubar, tearoff=0, font=menu_font)
@@ -1498,6 +1551,7 @@ class ServoWindow(tk.Tk):
         menubar.add_cascade(label="File", menu=filemenu, font=menu_font)
 
         servosmenu = Menu(menubar, tearoff=0)
+        servosmenu.add_command(label="Centre all", command=ServoGridRow.centre_all, font=menu_font)
         servosmenu.add_command(label="Next " + str(INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
         servosmenu.add_command(label="Previous " + str(INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
         menubar.add_cascade(label="Servos", menu=servosmenu, font=menu_font)
@@ -1539,19 +1593,21 @@ class ServoWindow(tk.Tk):
 
     def terminate_gui(self):
         # Has to destroy count_label explicitly because the main loop will try to use it otherwise.
-        # Just setting to None is not good enough (and I do not now why).
+        # Just setting to None is not good enough (and I do not know why).
         self.power_label.destroy()
         self.power_label = None
         self.count_label.destroy()
         self.count_label = None
         self.destroy()
-        print('INFO: GUI terminated.')
         request['action'] = 'terminate'
+        print('INFO: GUI terminated.')
 
     def about_function(self):
+        """ Menu response. """
         messagebox.showinfo("About", "This software was created by Andy Joel for Preston&District MRS, copyright 2024.")
 
     def help_function(self):
+        """ Menu response. """
         messagebox.showinfo("Help", "Each row controls a servo. Switch the point from left to right and back using On/Off.\n\nThe first angle is the target - what the servo is heading for. The second angle is the current value.\n\nUse Up and Down to modify the target angle.\n\nRemember to do File - Save to save your changes before you exit the program.")
 
 
@@ -1562,8 +1618,8 @@ class ServoWindow(tk.Tk):
 
 
 
-if len(sys.argv) > 1 and sys.argv[1]:
-   print('Running headless. Type "x" and press ENTER to exit.')
+if HEADLESS:
+    print('Running headless. Type "x" and press ENTER to exit.')
 else:
     window = ServoWindow()
     window.mainloop()
