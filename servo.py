@@ -22,6 +22,11 @@ SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
 SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
 START_CENTRED = True            # Servos go to the off position at turn on unless this is true
 
+
+
+
+
+
 #################################################################################
 # PYTHON IMPORTS
 
@@ -53,9 +58,34 @@ from PIL import Image, ImageTk
 HEADLESS = len(sys.argv) > 1 and sys.argv[1] 
 
 
+
+
 #################################################################################
 
-class Servo:
+class Device:
+    def __init__(self):
+        global comments
+        self.comments = list(comments)
+        self.widget = None
+        comments = []
+        
+    def write_to_file(self, f):
+        f.write('\n')
+        for s in self.comments:
+            f.write(s)
+
+    def set_widget(self, widget):
+        """
+        Set a Label widget that the servo can report its angle to.
+        Or set to None.
+        """
+        self.widget = widget
+
+
+
+#################################################################################
+
+class Servo(Device):
     """
     Represents a servo
     Works in hundredths of degrees internally
@@ -91,6 +121,7 @@ class Servo:
         Constructor. As well as setting the given values, also creates a servo object from the I2C
         board.        
         """
+        super().__init__()
         self.board_no = _board_no
         self.pin_no = _pin_no
         self.speed = _speed
@@ -124,7 +155,8 @@ class Servo:
 
     def write_to_file(self, f):
         """ Writes not just this servo, but also connected buttons and LEDs. """
-        f.write(f'\ns {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)}, {self.desc}\n')
+        super().write_to_file(f)
+        f.write(f's {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)}, {self.desc}\n')
         for led in self.on_leds:
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
         for led in self.off_leds:
@@ -268,7 +300,7 @@ class Servo:
 
 #################################################################################
  
-class IOPin:
+class IOPin(Device):
     """
     Represents an I/O pin, superclass for buttons and LEDs.
     """
@@ -321,6 +353,7 @@ class IOPin:
 
     def __init__(self, _board_no, _pin_no):
         """ Constructor. """
+        super().__init__()
         self.board_no = _board_no
         self.pin_no = _pin_no
         self.on_servos = []
@@ -433,13 +466,6 @@ class PButton(IOPin):
             print('ERROR: Got an OSError, possibly because I am trying to read a board that does not exist or is faulty?')
             print(f'board={self.board} pin={self.pin}')
 
-    def set_widget(self, widget):
-        """
-        Set a Label widget that the servo can report its angle to.
-        Or set to None.
-        """
-        self.widget = widget
-
     def check_state(self):
         """
         Call this every loop to have the button check its state and act appropriately.        
@@ -467,22 +493,37 @@ class PButton(IOPin):
 
 #################################################################################
 
-class Flasher:
+class Flasher(Device):
     """
-    Represents a flashing LED. The flashing is defined by an initial delay, an on time and an off time. The length of the cycle is on+off.
+    Represents a flashing LED. The flashing is defined by an initial delay, and either:
+      an on time and an off time; the length of the cycle is on+off
+      a string pattern, with dots for off and asterisks for on; the length of the cycle is the length of the string
     Times are in tenths of a second.
     """
+
     count = 0
 
     def create(s):
         """
-        Adds an I/O pin object, given a string
-        The string should consist of a "l" (for LED) or "b" (for button) to identify it as such
-        followed by (all separated with spaces):
-           on/off
-           the address - the board number, a dot and the pin number
+        Adds a flasher object, given a string
+        The string should consist of
+          an "f"
+          "s" or "r" or "p" indicating the type
+          the address - the board number, a dot and the pin number
+          the start delay
+          the flashing patttern as a string of dots and asterisks or the on time followed by the off time
         """
-        md = re.match('(f|r) (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+)', s)
+        md = re.match('f (s|r|p)', s)
+        if not md:
+            raise Exception('ERROR: Badly formatted line for Flasher: ' + s)
+        if  md.group(1) == 'p':
+            Flasher._p_create(s)
+        else:
+            Flasher._sr_create(s)
+
+    def _sr_create(s):
+        # Used by create to create a standard or random flasher
+        md = re.match('f (s|r) (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+)', s)
         if not md:
             raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
         # get the data from the regex match
@@ -491,6 +532,7 @@ class Flasher:
         start = int(md.group(4))
         on = int(md.group(5))
         off = int(md.group(6))
+        letter = md.group(1)
         # is there already an item of the wrong sort assigned there? if so, that is an error
         if IOPin.find_in_list(leds, board_no, pin_no):
             raise Exception(f'ERROR: Trying to set board/pin for flasher, but an indicator LED is already assigned: {board_no}.{pin_no}')
@@ -498,127 +540,11 @@ class Flasher:
             raise Exception(f'ERROR: Trying to set board/pin for flasher, but a button is already assigned: {board_no}.{pin_no}')
         if IOPin.find_in_list(flashers, board_no, pin_no):
             raise Exception(f'ERROR: Trying to set board/pin for flasher, but another flashing LED is already assigned: {board_no}.{pin_no}')
-        if md.group(1) == 'f':
-            flashers.append(Flasher(board_no, pin_no, start, on, off))
-        else:
-            flashers.append(RandomFlasher(board_no, pin_no, start, on, off))
+        flashers.append(Flasher(board_no, pin_no, letter, start, on=on, off=off))
 
-
-    def __init__(self, _board_no, _pin_no, _start, _on, _off):
-        """
-        Constructor.
-        """
-        self.board_no = _board_no
-        self.pin_no = _pin_no
-        self.start = _start
-        self.on = _on
-        self.off = _off
-        self.state = False
-        if ON_LINE:
-            self.led = io_boards[self.board_no].get_pin(self.pin_no)
-            self.led.switch_to_output(value=True)
-        self.index = Flasher.count
-        Flasher.count += 1
-       
-    def id(self):
-        """ The ID is the 'board.pin'. """
-        return f'{self.board_no}.{self.pin_no}'
-
-    def type_letter(self):
-        return 'f'
-
-    def set(self, value):
-        """ Sets the LED on or off. """
-        #print(f'Flasher {self.id()} setting to {value}')
-        self.state = value
-        if ON_LINE:
-            self.led.value = not value
-
-    def check(self, t):
-        """
-        Method to run every cycle. T is expected to be a float,
-        the number of tenths of a second since the program started.
-        """
-        #print(t)
-        if t < self.start:
-            # should be start anyway
-            #print('start')
-            return
-        t2 = (t - self.start) % (self.on + self.off)
-        #print(t2)
-        if t2 < self.on:
-            if not self.state:
-                self.set(True)
-        else:
-            if self.state:
-                self.set(False)
-
-    def write_to_file(self, f):
-        """ Writes the flasher to file. """
-        f.write(f'\n{self.type_letter()} {self.board_no}.{self.pin_no}, {self.start}, {self.on}, {self.off}')
-       
-
-
-#################################################################################
-
-class RandomFlasher(Flasher):
-    """
-    Sub-class of Flashes that gives random flashing, i.e., both on and
-    off are randomly determined each cycle, but will average out to the give values
-    more or less.
-    """
-
-
-    def __init__(self, _board_no, _pin_no, _start, _on, _off):
-        super().__init__(_board_no, _pin_no, _start, _on, _off)
-        self.loop_on = _on
-        self.loop_off = _off
-
-    def check(self, t):
-        if t < self.start:
-            # should be start anyway
-            return
-        if not self.loop_on:
-           # is this used?
-           self.loop_on = self.vary(self.on)
-           self.cycle_count = 0
-        t2 = (t - self.start) % (self.loop_on + self.loop_off)
-        #print(t2)
-        if t2 < self.loop_on:
-            if not self.state:
-                self.set(True)
-                self.loop_off = self.vary(self.off)
-        else:
-            if self.state:
-                self.set(False)
-                self.loop_on = self.vary(self.on)
-
-
-    def vary(self, n):
-        m = round(n/2)
-        return m + random.randint(0, m) + random.randint(0, m)
-
-    def type_letter(self):
-        return 'r'
-
-
-
-
-#################################################################################
-
-class PatternFlasher(Flasher):
-    """
-    Sub-class of Flashes that gives a complex flasdhing pattern.
-    """
-    def create(s):
-        """
-        Adds an I/O pin object, given a string
-        The string should consist of a "l" (for LED) or "b" (for button) to identify it as such
-        followed by (all separated with spaces):
-           on/off
-           the address - the board number, a dot and the pin number
-        """
-        md = re.match('p (\\d+)\\.(\\d+),? (\\d+),? ([\\.\\*]+)', s)
+    def _p_create(s):
+        # Used by create to create a pattern flasher
+        md = re.match('f p (\\d+)\\.(\\d+),? (\\d+),? ([\\.\\*]+)', s)
         if not md:
             raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
         # get the data from the regex match
@@ -633,41 +559,111 @@ class PatternFlasher(Flasher):
             raise Exception(f'ERROR: Trying to set board/pin for flasher, but a button is already assigned: {board_no}.{pin_no}')
         if IOPin.find_in_list(flashers, board_no, pin_no):
             raise Exception(f'ERROR: Trying to set board/pin for flasher, but another flashing LED is already assigned: {board_no}.{pin_no}')
-        flashers.append(PatternFlasher(board_no, pin_no, start, pattern))
+        flashers.append(Flasher(board_no, pin_no, 'p', start, pattern=pattern))
 
 
-    def __init__(self, _board_no, _pin_no, _start, _pattern):
-        super().__init__(_board_no, _pin_no, _start, 0, 0)
+    def __init__(self, board_no, pin_no, letter, start, on=0, off=0, pattern=None):
+        """
+        Constructor.
+        """
+        super().__init__()
+        self.board_no = board_no
+        self.pin_no = pin_no
+        self.state = False
+        if ON_LINE:
+            self.led = io_boards[self.board_no].get_pin(self.pin_no)
+            self.led.switch_to_output(value=True)
+        self.index = Flasher.count
+        Flasher.count += 1
+        self.letter = letter
+        self.start = start
+        self.on = on
+        self.off = off
+        self.loop_on = on
+        self.loop_off = off
         self.pattern = []
-        for c in _pattern:
-            self.pattern.append(c == '*')
+        if pattern:
+            for c in pattern:
+                self.pattern.append(c == '*')
 
+    def id(self):
+        """ The ID is the 'board.pin'. """
+        return f'{self.board_no}.{self.pin_no}'
+
+    def _vary(self, n):
+        m = round(n/2)
+        return m + random.randint(0, m) + random.randint(0, m)
+
+    def set(self, value):
+        """ Sets the LED on or off. """
+        #print(f'Flasher {self.id()} setting to {value}')
+        self.state = value
+        if ON_LINE:
+            self.led.value = not value
+        if self.widget:
+            if self.state:
+                self.widget.config(text='ON!', foreground='black', background='#80ff00')
+            else:
+                self.widget.config(text='---', foreground='black', background='#aaaaaa')
+        
+        
     def check(self, t):
-        # to do!!!
-        #print(t)
+        """
+        Should be called every loop with the elapsed time in tenths of a second
+        """
+        getattr(self, '_' + self.letter + '_check')(t)
+    
+    def _s_check(self, t):
         if t < self.start:
-            # should be start anyway
-            #print('start')
+            return
+        t2 = (t - self.start) % (self.on + self.off)
+        if t2 < self.on:
+            if not self.state:
+                self.set(True)
+        else:
+            if self.state:
+                self.set(False)
+
+    def _r_check(self, t):
+        if t < self.start:
+            return
+        if not self.loop_on:
+           # is this used?
+           self.loop_on = self._vary(self.on)
+           self.cycle_count = 0
+        t2 = (t - self.start) % (self.loop_on + self.loop_off)
+        if t2 < self.loop_on:
+            if not self.state:
+                self.set(True)
+                self.loop_off = self._vary(self.off)
+        else:
+            if self.state:
+                self.set(False)
+                self.loop_on = self._vary(self.on)
+
+    def _p_check(self, t):
+        if t < self.start:
             return
         t2 = math.floor((t - self.start) % len(self.pattern))
         desired = self.pattern[t2]
         if self.state != desired:
             self.set(desired)
 
-
-    def vary(self, n):
-        m = round(n/2)
-        return m + random.randint(0, m) + random.randint(0, m)
-
-    def type_letter(self):
-        return 'r'
-
     def write_to_file(self, f):
         """ Writes the flasher to file. """
-        pattern = ''
-        for flag in self.pattern:
-            pattern += ('*' if flag else '.')
-        f.write(f'\np {self.board_no}.{self.pin_no}, {self.start}, {pattern}')
+        super().write_to_file(f)
+        if self.letter == 'p':
+            pattern = ''
+            for flag in self.pattern:
+                pattern += ('*' if flag else '.')
+            f.write(f'f p {self.board_no}.{self.pin_no}, {self.start}, {pattern}')
+        else:
+            f.write(f'f {self.letter} {self.board_no}.{self.pin_no}, {self.start}, {self.on}, {self.off}')
+       
+
+
+
+
 
 
 
@@ -699,9 +695,12 @@ loop_count = 0
 
 window = None
 
+comments = None
+
 servo_grid_rows = []
 button_grid_rows = []
 led_grid_rows = []
+flasher_grid_rows = []
 
 
 
@@ -818,19 +817,20 @@ try:
     """
     with open('servo.txt', encoding="utf-8") as f:
         servo = None
+        comments = []
         for line in f:
             if line.isspace():
                 continue
-            if line[0:1] == 's':
+            if line[0:1] == '#':
+                comments.append(line)
+            elif line[0:1] == 's':
                 servo = Servo.create(servos, line)
             elif line[0:1] == 'b':
                 PButton.create(line, servo)
             elif line[0:1] == 'l':
                 Led.create(line, servo)
-            elif line[0:1] == 'f' or line[0:1] == 'r':
+            elif line[0:1] == 'f':
                 Flasher.create(line)
-            elif line[0:1] == 'p':
-                PatternFlasher.create(line)
             else:
                 load_device(line)
 except FileNotFoundError:
@@ -925,13 +925,13 @@ def main_loop():
     global previous_time, loop_count
     print('INFO: Starting the main loop.')
     while not request['action'] == 'terminate':
+    
         # HANDLE TIME
         now_time = time.time()
         elapsed = now_time - previous_time
         previous_time = now_time
         increment = TIME_FACTOR * elapsed
         
-        #"""
         # If the GUI is up, then count_label is a Label object
         # and can be updated with the loop count to show it is going
         # and indicate how fast. Cap at a million so no chance of overflow.
@@ -945,11 +945,7 @@ def main_loop():
             loop_count += 1
             if loop_count > 999999:
                 loop_count = 0
-        #else:
-        #    print('.', end='')
-        #"""
 
-        #print('one')
         
         # HANDLE UPS
         # Only do this every 100 loops; it is not going to change much
@@ -973,12 +969,11 @@ def main_loop():
                         window.power_label.config(text=f'Good; batteries at {round(percent_remaining, 2)}%.')
                 except tk.TclError:
                     print('*')
-        #print('two')
+
 
         # HANDLE INPUTS
         for button in buttons:
             button.check_state()
-        #print('three')
         
            
         # HANDLE INPUT REQUESTS
@@ -1029,7 +1024,6 @@ def main_loop():
             for led in leds:
                 led.set(False)
             request['action'] = False
-        #print('four')
 
 
         # HANDLE FLASHERS
@@ -1038,45 +1032,26 @@ def main_loop():
             for flasher in flashers:
                 flasher.check(t)
 
-        #print('five')
-
 
         # HANDLE SERVOS
         moving_flag = False;
         for servo in servos:
             if servo.adjust(increment):
                 moving_flag = True
-        #print('six')
+
 
         time.sleep(SLEEP)
-        
-        #print('seven')
-        
-        # HANDLE HARD BREAK
-        # Connect pins 39 and 40 (Ground and GPIO21) to exit if all else fails
 
     print("INFO: Main loop terminated.")
 
-
-
-#################################################################################
-# THREADING
  
-# We have three threads, one that does the work, for for the GUI,
-# one for the command line.
-
-# The command line and main loop are daemon threads - no need to shutdown gracefully
-# and should ensure they do stop
-if HEADLESS:
-    input_thread = Thread(target = input_loop)
-    input_thread.daemon = True
-    input_thread.start()
+# We have the main_loop on a separate thread. It is set to a daemon thread so
+# should ensure it stops when the main thread ends
 
 main_thread = Thread(target = main_loop)
 main_thread.daemon = True
 main_thread.start()
 
-# The GUI is done in the default thread; no need to define a new one
 
 
 
@@ -1085,7 +1060,7 @@ main_thread.start()
 
 
 ######################################################################
-# GUI CLASSES
+# GUI
 
 
 class ButtonsWindow(tk.Toplevel):
@@ -1109,7 +1084,7 @@ class ServoGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one servo,
     and buttons and labels on the row will change and reflect its state, but
-    which servo that is can vary depending on what self.offset is.
+    which servo that is can _vary depending on what self.offset is.
     """
     
     """
@@ -1305,12 +1280,12 @@ class ButtonGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one (real) button,
     and buttons and labels on the row will change and reflect its state, but
-    which (real) button that is can vary depending on what offset is.
+    which (real) button that is can _vary depending on what offset is.
     """
     
     offset = 0
 
-    def show_buttons():
+    def show():
         newWindow = ButtonsWindow(window)
         newWindow.title('Buttons')
         ButtonGridRow.headers(newWindow)
@@ -1389,18 +1364,17 @@ class ButtonGridRow():
     def destroy_button(self):
         self.lbl_state.destroy()
 
-
 class LedGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one LED,
     and buttons and labels on the row will change and reflect its state, but
-    which LED that is can vary depending on what offset is.
+    which LED that is can _vary depending on what offset is.
     """
 
     offset = 0
 
 
-    def show_leds():
+    def show():
         """ Responds to a menu click to show the window for LEDs"""
 
         newWindow = Toplevel(window)
@@ -1440,8 +1414,8 @@ class LedGridRow():
 
 
     def set_offset():
-        for button in buttons:
-            button.set_widget(None)
+        for led in leds:
+            led.set_widget(None)
         for row in button_grid_rows:
             row.update()
 
@@ -1498,6 +1472,101 @@ class LedGridRow():
         request['servo'] = self.led.index
 
 
+class FlasherGridRow():
+    """
+    Represents a row on the grid of the GUI. This will correspond to one Flasher,
+    and buttons and labels on the row will change and reflect its state, but
+    which Flasher that is can _vary depending on what offset is.
+    """
+
+    offset = 0
+
+
+    def show():
+        """ Responds to a menu click to show the window for LEDs"""
+
+        newWindow = Toplevel(window)
+        newWindow.title('Flashers')
+        FlasherGridRow.headers(newWindow)
+        for i in range(NUMBER_OF_ROWS):
+            led_grid_rows.append(FlasherGridRow(newWindow, i))
+           
+    def headers(win):
+        """ Set the first row. """
+        ttk.Label(win, text='ID', width=5, font=window.heading_font).grid(column=1, row=0)
+        #ttk.Label(win, text='Off servos', width=20, font=window.heading_font).grid(column=2, row=0)
+        #ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
+
+    def offset_plus_10():
+        if FlasherGridRow.offset > len(leds) - INCREMENT:
+            print('BAD INPUT: Trying to go beyond end!')
+            return
+        FlasherGridRow.offset += INCREMENT
+        FlasherGridRow.set_offset()
+
+    def offset_minus_10():
+        if FlasherGridRow.offset == 0:
+            print('BAD INPUT: Trying to go beyond start!')
+            return
+        FlasherGridRow.offset -= INCREMENT
+        FlasherGridRow.set_offset()
+
+
+    def set_offset():
+        for flasher in flashers:
+            flasher.set_widget(None)
+        for row in flasher_grid_rows:
+            row.update()
+
+    def __init__(self, win, row):
+        # When creating, the first button is 0
+        self.row = row             # The row in the table in the GUI
+        self.lbl_index = ttk.Label(win, text=str(row), font=window.label_font)
+        self.lbl_index.grid(column=0, row=1 + row, pady=5)
+       
+        self.lbl_desc = ttk.Label(win, text='---', width=20, font=window.label_font)
+        self.lbl_desc.grid(column=1, row=1 + row, sticky='w')
+
+        self.lbl_state = ttk.Label(win, text='---', width=20, font=window.label_font)
+        self.lbl_state.grid(column=2, row=1 + row, sticky='w')
+
+        """2
+        self.btn_on = ttk.Button(win, text="On")
+        self.btn_on.grid(column=4, row=1 + row)
+        self.btn_on.bind("<Button-1>", self.led_on_button)
+       
+        self.btn_off = ttk.Button(win, text="Off")
+        self.btn_off.grid(column=5, row=1 + row)
+        self.btn_off.bind("<Button-1>", self.led_off_button)
+        """
+
+        self.update()
+
+
+
+    def update(self):
+        """
+        Updates the row for a new led (or no led) when offset changes
+        """
+        if 0 <= (self.row + FlasherGridRow.offset) < len(flashers):
+            self.flasher = flashers[self.row + FlasherGridRow.offset]
+            self.lbl_index.config(text=str(self.row + FlasherGridRow.offset))
+            self.lbl_desc.config(text=self.flasher.id())
+            self.flasher.set_widget(self.lbl_state)
+        else:
+            self.flasher = None
+            self.lbl_index.config(text='---')
+            self.lbl_desc.config(text='---')
+    """
+    def led_on_button(self, event):
+        request['action'] = 'LED on'
+        request['servo'] = self.led.index
+
+    def led_off_button(self, event):
+        request['action'] = 'LED off'
+        request['servo'] = self.led.index
+    """
+
 class ServoWindow(tk.Tk):
     """
     Defines instances of a top-level window, whichis used to display servos
@@ -1544,36 +1613,42 @@ class ServoWindow(tk.Tk):
         # Doing this in its own function just to keep it isolated
         menu_font = font.Font(size=10)
         menubar = Menu(self)
-        filemenu = Menu(menubar, tearoff=0, font=menu_font)
-        filemenu.add_command(label="Save", command=save, font=menu_font)
-        filemenu.add_separator()
-        filemenu.add_command(label="Exit", command=self.confirm_quit, font=menu_font)
-        menubar.add_cascade(label="File", menu=filemenu, font=menu_font)
+        file_menu = Menu(menubar, tearoff=0, font=menu_font)
+        file_menu.add_command(label="Save", command=save, font=menu_font)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.confirm_quit, font=menu_font)
+        menubar.add_cascade(label="File", menu=file_menu, font=menu_font)
 
-        servosmenu = Menu(menubar, tearoff=0)
-        servosmenu.add_command(label="Centre all", command=ServoGridRow.centre_all, font=menu_font)
-        servosmenu.add_command(label="Next " + str(INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
-        servosmenu.add_command(label="Previous " + str(INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
-        menubar.add_cascade(label="Servos", menu=servosmenu, font=menu_font)
+        servos_menu = Menu(menubar, tearoff=0)
+        servos_menu.add_command(label="Centre all", command=ServoGridRow.centre_all, font=menu_font)
+        servos_menu.add_command(label="Next " + str(INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
+        servos_menu.add_command(label="Previous " + str(INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="Servos", menu=servos_menu, font=menu_font)
 
-        ledsmenu = Menu(menubar, tearoff=0)
-        ledsmenu.add_command(label="LEDs...", command=LedGridRow.show_leds, font=menu_font)
-        ledsmenu.add_command(label="All on", command=LedGridRow.all_leds_on, font=menu_font)
-        ledsmenu.add_command(label="All off", command=LedGridRow.all_leds_off, font=menu_font)
-        ledsmenu.add_command(label="Next " + str(INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
-        ledsmenu.add_command(label="Previous " + str(INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
-        menubar.add_cascade(label="LEDs", menu=ledsmenu, font=menu_font)
+        leds_menu = Menu(menubar, tearoff=0)
+        leds_menu.add_command(label="LEDs...", command=LedGridRow.show, font=menu_font)
+        leds_menu.add_command(label="All on", command=LedGridRow.all_leds_on, font=menu_font)
+        leds_menu.add_command(label="All off", command=LedGridRow.all_leds_off, font=menu_font)
+        leds_menu.add_command(label="Next " + str(INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
+        leds_menu.add_command(label="Previous " + str(INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="LEDs", menu=leds_menu, font=menu_font)
 
-        buttonsmenu = Menu(menubar, tearoff=0)
-        buttonsmenu.add_command(label="Buttons...", command=ButtonGridRow.show_buttons, font=menu_font)
-        buttonsmenu.add_command(label="Next " + str(INCREMENT), command=ButtonGridRow.offset_plus_10, font=menu_font)
-        buttonsmenu.add_command(label="Previous " + str(INCREMENT), command=ButtonGridRow.offset_minus_10, font=menu_font)
-        menubar.add_cascade(label="Buttons", menu=buttonsmenu, font=menu_font)
+        buttons_menu = Menu(menubar, tearoff=0)
+        buttons_menu.add_command(label="Buttons...", command=ButtonGridRow.show, font=menu_font)
+        buttons_menu.add_command(label="Next " + str(INCREMENT), command=ButtonGridRow.offset_plus_10, font=menu_font)
+        buttons_menu.add_command(label="Previous " + str(INCREMENT), command=ButtonGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="Buttons", menu=buttons_menu, font=menu_font)
 
-        helpmenu = Menu(menubar, tearoff=0)
-        helpmenu.add_command(label="Help", command=self.help_function, font=menu_font)
-        helpmenu.add_command(label="About...", command=self.about_function, font=menu_font)
-        menubar.add_cascade(label="Help", menu=helpmenu, font=menu_font)
+        flashers_menu = Menu(menubar, tearoff=0)
+        flashers_menu.add_command(label="Flashers...", command=FlasherGridRow.show, font=menu_font)
+        flashers_menu.add_command(label="Next " + str(INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
+        flashers_menu.add_command(label="Previous " + str(INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
+        menubar.add_cascade(label="Flashers", menu=flashers_menu, font=menu_font)
+
+        help_menu = Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Help", command=self.help_function, font=menu_font)
+        help_menu.add_command(label="About...", command=self.about_function, font=menu_font)
+        menubar.add_cascade(label="Help", menu=help_menu, font=menu_font)
         self.config(menu=menubar)
 
     def confirm_quit(self):
@@ -1613,13 +1688,11 @@ class ServoWindow(tk.Tk):
 
 
 
-######################################################################
-# Create the GUI!
-
 
 
 if HEADLESS:
-    print('Running headless. Type "x" and press ENTER to exit.')
+    input_loop()
+
 else:
     window = ServoWindow()
     window.mainloop()
