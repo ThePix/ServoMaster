@@ -17,7 +17,7 @@ TIME_FACTOR = 10.0              # Globally control servo speed
 NUMBER_OF_ROWS = 10             # Show this number of rows in the GUI
 INCREMENT = 5                   # Jump this number of rows in the GUI
 DESC_WIDTH = 24                 # The description for servos can be this long
-ANGLE_ADJUST = 10               # Up/down buttons change the angle this much
+ANGLE_ADJUST = 5               # Up/down buttons change the angle this much
 SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
 SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
 START_CENTRED = True            # Servos go to the off position at turn on unless this is true
@@ -57,7 +57,16 @@ from PIL import Image, ImageTk
 
 HEADLESS = len(sys.argv) > 1 and sys.argv[1] 
 
-
+def verify(n, min, max, msg):
+    """
+    Checks a value is in the right range. If not the message is printed and the program will quit.
+    Used in constructors to ensure servos, etc. are on boards and pins that make sense,
+    and angles are in suitable ranges.
+    Note that n must be equal or greater than min, but less than max.
+    """
+    if n >= max or n < min:
+        print(f'{msg} Found {n}, expected that to be {min} or over and less than {max}')
+        exit()
 
 
 #################################################################################
@@ -116,27 +125,33 @@ class Servo(Device):
             print('ERROR: Badly formatted line for servo: ' + s)
             return None
    
-    def __init__(self, _board_no, _pin_no, _speed, _off_angle, _centre_angle, _on_angle, _desc=None):
+    def __init__(self, board_no, pin_no, speed, off_angle, centre_angle, on_angle, desc=None):
         """
         Constructor. As well as setting the given values, also creates a servo object from the I2C
         board.        
         """
         super().__init__()
-        self.board_no = _board_no
-        self.pin_no = _pin_no
-        self.speed = _speed
-        self.off_angle = _off_angle * 100
-        self.centre_angle = _centre_angle * 100
+        verify(board_no, 0, len(servo_boards), 'Servo board number out of range.')
+        verify(pin_no, 0, 16, 'Servo pin number out of range.')
+        verify(off_angle, 10, 180, 'Servo off angle out of range.')
+        verify(centre_angle, 10, 180, 'Servo centre angle out of range.')
+        verify(on_angle, 10, 180, 'Servo on angle out of range.')
+        
+        self.board_no = board_no
+        self.pin_no = pin_no
+        self.speed = speed
+        self.off_angle = off_angle * 100
+        self.centre_angle = centre_angle * 100
         if START_CENTRED:
-            self.target_angle = _centre_angle * 100
-            self.current_angle = _centre_angle * 100
+            self.target_angle = centre_angle * 100
+            self.current_angle = centre_angle * 100
             self.centred = True
         else:
-            self.target_angle = _off_angle * 100
-            self.current_angle = _off_angle * 100
+            self.target_angle = off_angle * 100
+            self.current_angle = off_angle * 100
             self.centred = False
-        self.on_angle = _on_angle * 100
-        self.desc = _desc
+        self.on_angle = on_angle * 100
+        self.desc = desc
         self.moving = False
         self.on_leds = []
         self.off_leds = []
@@ -351,11 +366,11 @@ class IOPin(Device):
         return None
         
 
-    def __init__(self, _board_no, _pin_no):
+    def __init__(self, board_no, pin_no):
         """ Constructor. """
         super().__init__()
-        self.board_no = _board_no
-        self.pin_no = _pin_no
+        self.board_no = board_no
+        self.pin_no = pin_no
         self.on_servos = []
         self.off_servos = []
        
@@ -399,11 +414,13 @@ class Led(IOPin):
         servo.set_led(led, turn_on)
 
 
-    def __init__(self, _board_no, _pin_no):
+    def __init__(self, board_no, pin_no):
         """
         Constructor. Uses the super contructor, but also connects to the I/O board.
         """
-        super().__init__(_board_no, _pin_no)
+        super().__init__(board_no, pin_no)
+        verify(self.board_no, 0, len(io_boards), 'I/O board number out of range for LED.')
+        verify(self.pin_no, 0, 16, 'LED pin number out of range.')
         if ON_LINE:
             self.led = io_boards[self.board_no].get_pin(self.pin_no)
             self.led.switch_to_output(value=True)
@@ -439,11 +456,13 @@ class PButton(IOPin):
         button, turn_on = IOPin.create(PButton, buttons, leds, 'b', s, servos)
         servo.set_button(button, turn_on)
 
-    def __init__(self, _board_no, _pin_no):
+    def __init__(self, board_no, pin_no):
         """
         Constructor. Uses the super contructor, but also connects to the I/O board.
         """
-        super().__init__(_board_no, _pin_no)
+        super().__init__(board_no, pin_no)
+        verify(self.board_no, 0, len(io_boards), 'I/O board number out of range for button.')
+        verify(self.pin_no, 0, 16, 'Button pin number out of range.')
         if ON_LINE:
             self.button = io_boards[self.board_no].get_pin(self.pin_no)
             self.button.switch_to_input(pull=digitalio.Pull.UP)
@@ -567,6 +586,8 @@ class Flasher(Device):
         Constructor.
         """
         super().__init__()
+        verify(board_no, 0, len(io_boards), 'I/O board number out of range for LED.')
+        verify(pin_no, 0, 16, 'LED pin number out of range.')
         self.board_no = board_no
         self.pin_no = pin_no
         self.state = False
