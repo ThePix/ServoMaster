@@ -1,0 +1,13 @@
+This should get you started with ServoMaster, the software for operating points.
+
+Click the dark grey icon, top-left, with ">_" on it, to open a terminal window.
+
+Type "source pdmrs/bin/activate" (or copy and paste from here), and press enter. This activates the virtual environment, and you only need to do when you start up the Raspberry Pi.
+
+Type "python servo.py" to start the software
+
+The software uses the file /home/pdmrs/servo.txt to configure the system. It checks that each I2C board is present and responding, and will crash out if that is not the case. To trouble-shoot, you might want to try "python find_i2c.py", which will check what is conected every two seconds (do [ctrl]-C to terminate.
+
+If you get an Errno 5 or Errno 121 when running ServoMaster, it may be there is no ground connection to the I2C board. It appears that ground is not required for the board to respond that it is present, but is required to operate the servo - and a connection to ground on the power side is not good enough. Note: there should be a light on the board if both power and ground connected to the I2C bus.
+
+If the software is telling you the servos are moving but nothing is happening, check the power supply to the board.

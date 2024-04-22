@@ -10,7 +10,7 @@ https://github.com/ThePix/ServoMaster/wiki
 #################################################################################
 # CONFIGURATION CONSTANTS
 
-ON_LINE = False                 # Set to False to test without connecting to I2C
+ON_LINE = True                 # Set to False to test without connecting to I2C
 QUIT_WITHOUT_CONFIRM = True     # Set to True to skip the confirmation when quitting
 REPORT_SERVO_SWITCHING = True   # If True requests to change servos is logged to console
 TIME_FACTOR = 10.0              # Globally control servo speed
@@ -38,15 +38,21 @@ import math
 from threading import Thread
 
 if ON_LINE:
-    # Imports for I2C
-    import board
-    import digitalio
-    import adafruit_pcf8575
-    import I2C_LCD_driver
-    from adafruit_character_lcd.character_lcd_i2c import Character_LCD_I2C
-    from adafruit_servokit import ServoKit
-    import INA219
-
+    try:
+        # Imports for I2C
+        import board
+        import digitalio
+        import adafruit_pcf8575
+        import I2C_LCD_driver
+        from adafruit_character_lcd.character_lcd_i2c import Character_LCD_I2C
+        from adafruit_servokit import ServoKit
+        import INA219
+    except ModuleNotFoundError as err:
+        print(f"ERROR: ModuleNotFoundError {err}")
+        print('This is likely because you have not activated the environment.\nTo do so, type "source pdmrs/bin/activate", then try again.')
+        exit()
+        
+        
 # Imorts for GUI
 import tkinter as tk
 import tkinter.ttk as ttk
@@ -118,7 +124,8 @@ class Servo(Device):
         """
         md = re.match('s (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+),? (\\d+),? ?(.*)', s)
         if md:
-            servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), md.group(7))
+            #servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), md.group(7))
+            servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), 'test')
             lst.append(servo)
             return servo
         else:
@@ -136,6 +143,7 @@ class Servo(Device):
         verify(off_angle, 10, 180, 'Servo off angle out of range.')
         verify(centre_angle, 10, 180, 'Servo centre angle out of range.')
         verify(on_angle, 10, 180, 'Servo on angle out of range.')
+        verify(speed, 10, 1000000, 'Speed out of range.')
         
         self.board_no = board_no
         self.pin_no = pin_no
@@ -159,7 +167,8 @@ class Servo(Device):
         self.off_buttons = []
         if ON_LINE:
             self.servo = servo_boards[self.board_no].servo[self.pin_no]
-            self.servo.angle = self.current_angle
+            print('..' + str(self.current_angle / 100))
+            self.servo.angle = self.current_angle / 100
         self.turn_on = False
         self.index = Servo.count
         Servo.count += 1
@@ -289,7 +298,15 @@ class Servo(Device):
             self.current_angle += diff
        
         if ON_LINE:
-            self.servo.angle = self.current_angle / 100
+            print(self.current_angle)
+            print(self.current_angle / 100)
+            try:
+                self.servo.angle = self.current_angle / 100
+            except OSError as err:
+                print("ERROR: OSError {err}")
+                print("This may be because there is no ground connection\nto the servo board on the I2C side")
+                print("Terminating!")
+                exit()
        
         if self.widget:
             self.widget.config(text=self.get_current_angle())
@@ -806,7 +823,9 @@ def load_device(line):
     address = int(md.group(2), 16)
     if ON_LINE and not address in i2c_devices:
         print('ERROR: Device not found: ' + line)
-        return False                
+        print('This is not going well; I am giving up!\nYou need to ensure the I2C boards are connected\nand correctly configured in "servo.txt".\nGood luck...')
+        exit()
+                        
     if ON_LINE:
         match md.group(1):
             case 'S':
