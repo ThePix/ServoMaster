@@ -10,17 +10,31 @@ https://github.com/ThePix/ServoMaster/wiki
 #################################################################################
 # CONFIGURATION CONSTANTS
 
-ON_LINE = True                 # Set to False to test without connecting to I2C
+ON_LINE = False                 # Set to False to test without connecting to I2C
 QUIT_WITHOUT_CONFIRM = True     # Set to True to skip the confirmation when quitting
 REPORT_SERVO_SWITCHING = True   # If True requests to change servos is logged to console
 TIME_FACTOR = 10.0              # Globally control servo speed
-NUMBER_OF_ROWS = 10             # Show this number of rows in the GUI
-INCREMENT = 5                   # Jump this number of rows in the GUI
+NUMBER_OF_ROWS = 26             # Show this number of rows in the GUI
+INCREMENT = 10                  # Jump this number of rows in the GUI
 DESC_WIDTH = 24                 # The description for servos can be this long
-ANGLE_ADJUST = 5               # Up/down buttons change the angle this much
+ANGLE_ADJUST = 5                # Up/down buttons change the angle this much
 SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
 SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
-START_CENTRED = True            # Servos go to the off position at turn on unless this is true
+START_CENTRED = False           # Servos go to the off position at turn on unless this is true
+
+# The rest are all for track plan
+SHOW_TRACKPLAN = True
+SHOW_GRID = True
+LINE_WIDTH = 4
+WIDTH = 800
+HEIGHT = 200
+X_SCALE = 50
+Y_SCALE = 10
+X_OFFSET = 150
+Y_OFFSET = 50
+X_MIRROR = True
+Y_MIRROR = True
+
 
 
 
@@ -35,6 +49,7 @@ import re
 import sys
 import random
 import math
+import traceback
 from threading import Thread
 
 if ON_LINE:
@@ -84,8 +99,9 @@ class Device:
         self.widget = None
         comments = []
         
-    def write_to_file(self, f):
-        f.write('\n')
+    def write_to_file(self, f, newline=False):
+        if newline:
+            f.write('\n')
         for s in self.comments:
             f.write(s)
 
@@ -122,17 +138,17 @@ class Servo(Device):
            the on angle
            the descriptor
         """
-        md = re.match('s (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+),? (\\d+),? ?(.*)', s)
+        md = re.match(r's (\d+)\.(\d+),? (\d+),? (\d+),? (\d+),? (\d+),?(?: ?\[(.*?)\])? ?(.*)', s)
+
         if md:
-            #servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), md.group(7))
-            servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), 'test')
+            servo = Servo(int(md.group(1)), int(md.group(2)), int(md.group(3)), int(md.group(4)), int(md.group(5)), int(md.group(6)), md.group(7), md.group(8))
             lst.append(servo)
             return servo
         else:
             print('ERROR: Badly formatted line for servo: ' + s)
             return None
    
-    def __init__(self, board_no, pin_no, speed, off_angle, centre_angle, on_angle, desc=None):
+    def __init__(self, board_no, pin_no, speed, off_angle, centre_angle, on_angle, graphic=None, desc=None):
         """
         Constructor. As well as setting the given values, also creates a servo object from the I2C
         board.        
@@ -165,6 +181,18 @@ class Servo(Device):
         self.off_leds = []
         self.on_buttons = []
         self.off_buttons = []
+       
+        if graphic:
+            md = re.match(r'(r)?([ABY]) (\d), (\d)', _graphic)
+            self.graphic = {
+                'reverse':md.group(1) == 'r',
+                'shape':md.group(2),
+                'x':int(md.group(3)),
+                'y':int(md.group(4)),
+            }
+        else:
+            self.graphic = None
+
         if ON_LINE:
             self.servo = servo_boards[self.board_no].servo[self.pin_no]
             print('..' + str(self.current_angle / 100))
@@ -173,14 +201,67 @@ class Servo(Device):
         self.index = Servo.count
         Servo.count += 1
        
+       
+    def is_here(self, x, y):
+        if self.graphic['x'] != x:
+            return False
+           
+        if self.graphic['y'] == y:
+            return True
+        # This type opf point goes above the line
+        if (self.graphic['shape'] == 'Y' or self.graphic['shape'] == 'A') and self.graphic['y'] == y - 1:
+            return True
+        # This type opf point goes below the line
+        if (self.graphic['shape'] == 'Y' or self.graphic['shape'] == 'B') and self.graphic['y'] == y + 1:
+            return True
+        return False
+       
+    def draw(self, trackplan, full=False):
+        if not self.graphic:
+            return
+           
+        main_colour = 'silver'
+        branch_colour = 'silver'
+        if self.current_angle == self.off_angle:
+            main_colour = 'green'
+        if self.current_angle == self.on_angle:
+            branch_colour = 'green'
+           
+        if self.main_colour != main_colour or self.branch_colour != branch_colour or full:
+            if self.graphic['reverse']:
+                # Main
+                offset = -1 if self.graphic['shape'] == 'Y' else 0
+                trackplan.r_line(self.graphic['x'], self.graphic['y'], offset, main_colour)
+               
+                # Branch
+                offset = -1 if self.graphic['shape'] == 'B' else 1
+                trackplan.r_line(self.graphic['x'], self.graphic['y'], offset, branch_colour)
+            else:      
+                # Main
+                offset = -1 if self.graphic['shape'] == 'Y' else 0
+                trackplan.line(self.graphic['x'], self.graphic['y'], offset, main_colour)
+               
+                # Branch
+                offset = -1 if self.graphic['shape'] == 'B' else 1
+                trackplan.line(self.graphic['x'], self.graphic['y'], offset, branch_colour)
+            self.main_colour = main_colour
+            self.branch_colour = branch_colour
+
+     
     def id(self):
         """ The ID is the 'board.pin'. """
         return f'{self.board_no}.{self.pin_no}'
 
     def write_to_file(self, f):
         """ Writes not just this servo, but also connected buttons and LEDs. """
-        super().write_to_file(f)
-        f.write(f's {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)}, {self.desc}\n')
+        super().write_to_file(f, True)
+        s = f's {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)}, '
+        if self.graphic:
+            s += '['
+            if self.graphic['reverse']:
+                s += 'r'
+            s += f"{self.graphic['shape']} {self.graphic['x']}, {self.graphic['y']}]"
+        f.write(f'{s} {self.desc}\n')
         for led in self.on_leds:
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
         for led in self.off_leds:
@@ -196,7 +277,7 @@ class Servo(Device):
         Or set to None to stop it.
         """
         self.widget = _widget
-        
+       
     def sanity_check(self):
         """ Check for matching numbers of buttons and LEDS. """
         if len(self.on_leds) == 0:
@@ -234,7 +315,7 @@ class Servo(Device):
         if REPORT_SERVO_SWITCHING:
             state = 'ON' if _turn_on else 'OFF'
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
-        
+       
     def centre(self):
         """"
         Set the target angle to the centre angle, which will cause the servo
@@ -244,7 +325,7 @@ class Servo(Device):
         self.centred = True
         if REPORT_SERVO_SWITCHING:
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to centred')
-        
+       
     def set_angle(self, angle):
         """"
         Set the target angle, which will cause the servo
@@ -318,7 +399,7 @@ class Servo(Device):
             led.set(False)
         for led in self.off_leds:
             led.set(False)
-        
+       
     def set_leds(self):
         """ Turns on correct LEDs. """
         if self.target_angle == self.on_angle:
@@ -327,6 +408,123 @@ class Servo(Device):
         else:
             for led in self.off_leds:
                 led.set(True)
+
+
+
+class Decorator(Device):
+    def create(line):
+        if line[0:2] == '-c':
+            Connector.create(line)
+        elif line[0:2] == '-p':
+            Platform.create(line)
+        elif line[0:2] == '-t':
+            Text.create(line)
+
+
+
+class Connector(Device):
+    """
+    Represents a connector - a non-functional line on the trackplan
+    """
+
+    offsets = {
+        '-':0,
+        'u':1,
+        'U':2,
+        'd':-1,
+        'D':-2,
+    }
+
+    def create(s):
+        md = re.match(r'\-c ?([-uUdD]) (\d), (\d) ?(.*)', s)
+        if md:
+            conn = Connector(md.group(1), int(md.group(2)), int(md.group(3)), md.group(4))
+            decorators.append(conn)
+            return conn
+        else:
+            print('ERROR: Badly formatted line for connector: ' + s)
+            return None
+   
+    def __init__(self, shape, x, y, desc=None):
+        super().__init__()
+        self.offset = Connector.offsets[shape]
+        self.shape = shape
+        self.desc = desc
+        self.x = x
+        self.y = y
+        print('self.offset', self.offset)
+        print('self.x', self.x)
+        print('self.y', self.y)
+       
+    def draw(self, trackplan):
+        trackplan.line(self.x, self.y, self.offset, "blue")
+
+    def write_to_file(self, f):
+        super().write_to_file(f)
+        f.write(f'-c {self.shape} {self.x}, {self.y} {self.desc}\n')
+       
+
+class Platform(Device):
+    """
+    Represents a platform - decoration on the trackplan
+    """
+
+    def create(s):
+        md = re.match(r'\-p ?(\d), (\d) ?(.*)', s)
+        if md:
+            p = Platform(int(md.group(1)), int(md.group(2)), md.group(3))
+            decorators.append(p)
+            return p
+        else:
+            print('ERROR: Badly formatted line for platform: ' + s)
+            return None
+   
+    def __init__(self, x, y, desc=None):
+        super().__init__()
+        self.x = x
+        self.y = y
+        self.desc = desc
+       
+    def draw(self, trackplan):
+        trackplan.platform(self.x, self.y)
+       
+    def write_to_file(self, f):
+        super().write_to_file(f)
+        f.write(f'-p {self.x}, {self.y} {self.desc}\n')
+
+
+class Text(Device):
+    """
+    Represents a platform - decoration on the trackplan
+    """
+
+    def create(s):
+        md = re.match(r'\-t ?(\d), (\d) (.+)', s)
+        if md:
+            t = Text(int(md.group(1)), int(md.group(2)), md.group(3))
+            decorators.append(t)
+            return t
+        else:
+            print('ERROR: Badly formatted line for text: ' + s)
+            return None
+   
+    def __init__(self, x, y, desc):
+        super().__init__()
+        self.x = x
+        self.y = y
+        self.desc = desc
+       
+    def draw(self, trackplan):
+        trackplan.text(self.x, self.y, self.desc)
+       
+    def write_to_file(self, f):
+        super().write_to_file(f)
+        f.write(f'-t {self.x}, {self.y} {self.desc}\n')
+
+
+
+
+
 
 
 
@@ -381,7 +579,7 @@ class IOPin(Device):
             if el.board_no == board_no and el.pin_no == pin_no:
                 return el
         return None
-        
+       
 
     def __init__(self, board_no, pin_no):
         """ Constructor. """
@@ -407,7 +605,7 @@ class IOPin(Device):
             self.on_servos.append(servo)
         else:
             self.off_servos.append(servo)
-            
+           
 
 
 #################################################################################
@@ -495,7 +693,7 @@ class PButton(IOPin):
         """
         if not ON_LINE:
             return False
-        
+       
         try:
             return not self.button.value
         except OSError:
@@ -511,7 +709,7 @@ class PButton(IOPin):
                 servo.set(True)
             for servo in self.off_servos:
                 servo.set(False)
-        
+       
         # This seems not to work reliably because widget can get set to None after is is checked
         # The exception handling deals with it... by ignoring it
         if not self.widget:
@@ -643,14 +841,14 @@ class Flasher(Device):
                 self.widget.config(text='ON!', foreground='black', background='#80ff00')
             else:
                 self.widget.config(text='---', foreground='black', background='#aaaaaa')
-        
-        
+       
+       
     def check(self, t):
         """
         Should be called every loop with the elapsed time in tenths of a second
         """
         getattr(self, '_' + self.letter + '_check')(t)
-    
+   
     def _s_check(self, t):
         if t < self.start:
             return
@@ -727,6 +925,10 @@ servos = []
 leds = []
 buttons = []
 flashers = []
+decorators = []
+
+trackplan = None
+
 
 request = { 'action':False, 'testing':True}  # User input is done by changing this to request a change
 loop_count = 0
@@ -772,17 +974,17 @@ def save():
                     f.write(f'UPS{hex(usp_board.addr)}\n')
 
             # Now save the servos and related data
-            for servo in servos:
-                servo.write_to_file(f)
-
-            # Now save the servos and related data
-            for flasher in flashers:
-                flasher.write_to_file(f)
-                
+            for lst in [servos, flashers, decorators]:
+                print(len(lst))
+                for el in lst:
+                    el.write_to_file(f)
+               
         print("INFO: Save successful")
+
     except Exception as err:
         print('ERROR: Failed to save the configuration file, servo.txt.')
         print(f"Reported: Unexpected {err=}, {type(err)=}")
+        print(traceback.format_exc())
 
 
 
@@ -812,7 +1014,7 @@ def load_device(line):
     Adds an I2C board, given a string.
     The string should consist of the board type identifier - one or more letters in upper case
     followed directly by the addess in hexadecimal (use lower case letters if required!).
-    
+   
     This is in a function of its own so we can readily exit it it a problem is encountered.
     """
     md = re.match('([A-Z]+)(?:0x|)([0-9a-f]+)', line)
@@ -865,6 +1067,8 @@ try:
                 comments.append(line)
             elif line[0:1] == 's':
                 servo = Servo.create(servos, line)
+            elif line[0:1] == '-':
+                Decorator.create(line)
             elif line[0:1] == 'b':
                 PButton.create(line, servo)
             elif line[0:1] == 'l':
@@ -965,13 +1169,13 @@ def main_loop():
     global previous_time, loop_count
     print('INFO: Starting the main loop.')
     while not request['action'] == 'terminate':
-    
+   
         # HANDLE TIME
         now_time = time.time()
         elapsed = now_time - previous_time
         previous_time = now_time
         increment = TIME_FACTOR * elapsed
-        
+       
         # If the GUI is up, then count_label is a Label object
         # and can be updated with the loop count to show it is going
         # and indicate how fast. Cap at a million so no chance of overflow.
@@ -986,7 +1190,7 @@ def main_loop():
             if loop_count > 999999:
                 loop_count = 0
 
-        
+       
         # HANDLE UPS
         # Only do this every 100 loops; it is not going to change much
         # Get values from device
@@ -1014,7 +1218,7 @@ def main_loop():
         # HANDLE INPUTS
         for button in buttons:
             button.check_state()
-        
+       
            
         # HANDLE INPUT REQUESTS
         if request['action'] == 'angle':
@@ -1080,6 +1284,9 @@ def main_loop():
                 moving_flag = True
 
 
+        if loop_count % 100 == 50 and trackplan:
+            trackplan.redraw()
+
         time.sleep(SLEEP)
 
     print("INFO: Main loop terminated.")
@@ -1104,19 +1311,130 @@ main_thread.start()
 
 
 class ButtonsWindow(tk.Toplevel):
-    """ 
+    """
     Define a special child window that stops buttons trying to update labels in it when it is destroyed.
     More specifically, it sets the widget in the buttons to None, and then tells each row to
     destroy the label. Hopefully the program will then exit gracefully.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+       
     def destroy(self):
         for i in range(len(buttons)):
             buttons[i].set_widget(None)        
         for row in button_grid_rows:
             row.destroy_button()
+        return super().destroy()
+
+
+class TrackPlan(tk.Toplevel):
+    """
+    """
+    def show():
+        global trackplan
+        if not trackplan:
+            trackplan = TrackPlan(window)
+            trackplan.redraw(True)
+       
+       
+       
+    def left_click(event):
+        TrackPlan._mouse_click(event, False)
+       
+    def right_click(event):
+        TrackPlan._mouse_click(event, True)
+       
+    def _mouse_click(event, right_click):
+        x = TrackPlan._underive_x(event.x)
+        y = TrackPlan._underive_y(event.y)
+        for servo in servos:
+            if servo.is_here(x, y):
+                servo.set(right_click)
+       
+
+    def __init__(self, window):
+        super().__init__(window, width=WIDTH, height=HEIGHT + 24)
+        self.title('Track Plan')
+       
+        try:
+            self.img = Image.open("servo_icon.png")
+            self.img = ImageTk.PhotoImage(self.img)
+        except FileNotFoundError:
+            self.img = None
+            print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
+
+        # top_frame = tk.Frame(self, bg="#6FAFE7", width=WIDTH)
+        # top_frame.pack()
+        # if self.img:
+            # ttk.Label(top_frame, image=self.img).pack(side='left', anchor='nw')
+        # label = tk.Label(top_frame, text='Left click for straight, right click for branch').pack(side='left')
+        if self.img:
+            ttk.Label(self, image=self.img).place(x=0, y=0)
+        label = tk.Label(self, text='Left click a point for straight, right click for branch').place(x=40,y=0)
+       
+       
+        self.canvas = tk.Canvas(self, width=WIDTH, height=HEIGHT)
+        self.canvas.place(x=0,y=24)
+        #self.canvas.pack(fill=tk.BOTH, expand=1)
+        self.canvas.bind('<Button-1>', TrackPlan.left_click)
+        self.canvas.bind('<Button-3>', TrackPlan.right_click)
+        self.redraw(True)
+       
+       
+    def redraw(self, full=False):
+        if full:
+            self.canvas.delete(tk.ALL)
+            if SHOW_GRID:
+                for i in range(math.floor(WIDTH / X_SCALE)):
+                    for j in range(math.floor(HEIGHT / Y_SCALE)):
+                        self.canvas.create_line(TrackPlan._derive_x(i), TrackPlan._derive_y(j), TrackPlan._derive_x(i) + 1, TrackPlan._derive_y(j), fill='black', width=1)
+            for el in decorators:
+                el.draw(self)
+
+        for servo in servos:
+            servo.draw(self, full)
+           
+    # Convert a grid position to pixels
+    def _derive_x(x):
+        n = x * X_SCALE + X_OFFSET
+        return WIDTH - n if X_MIRROR else n
+
+    def _derive_y(y):
+        n = HEIGHT - y * Y_SCALE - Y_OFFSET
+        return HEIGHT - n if Y_MIRROR else n
+           
+           
+    # Convert a pixel position to grid
+    def _underive_x(x):
+        if X_MIRROR:
+            x = WIDTH - x
+        return math.floor((x - X_OFFSET) / X_SCALE)
+
+    def _underive_y(y):
+        if Y_MIRROR:
+            y = HEIGHT - y
+        return math.floor((HEIGHT - y - Y_OFFSET) / Y_SCALE)
+
+
+
+
+           
+    def line(self, x, y, dy, c):
+        self.canvas.create_line(TrackPlan._derive_x(x), TrackPlan._derive_y(y), TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y + dy), fill=c, width=LINE_WIDTH)
+
+    def r_line(self, x, y, dy, c):
+        self.canvas.create_line(TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y), TrackPlan._derive_x(x), TrackPlan._derive_y(y + dy), fill=c, width=LINE_WIDTH)
+
+    def platform(self, x, y):
+        self.canvas.create_line(TrackPlan._derive_x(x), TrackPlan._derive_y(y + 0.5), TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y + 0.5), fill='grey', width=Y_SCALE)
+
+    def text(self, x, y, s):
+        self.canvas.create_text(TrackPlan._derive_x(x), TrackPlan._derive_y(y + 0.5), text=s, fill="black", font=('Helvetica 15 bold'))
+
+
+    def destroy(self):
+        global trackplan
+        trackplan = None
         return super().destroy()
 
 
@@ -1126,11 +1444,11 @@ class ServoGridRow():
     and buttons and labels on the row will change and reflect its state, but
     which servo that is can _vary depending on what self.offset is.
     """
-    
+   
     """
     def up_button_pressed(self, event):
         ServoGridRow.find_row(event.widget).up_button()
-    
+   
     def find_row(widget):
         for row in servo_grid_rows:
             if row.btn_up == widget or row.btn_down == widget or row.btn_on_off == widget:
@@ -1144,7 +1462,7 @@ class ServoGridRow():
             servo.centre()
         for row in servo_grid_rows:
             row.update()
-    
+   
     def offset_plus_10():
         if ServoGridRow.offset > len(servos) - INCREMENT:
             print('BAD INPUT: Trying to go beyond end!')
@@ -1211,7 +1529,7 @@ class ServoGridRow():
         self.lbl_current_angle = ttk.Label(text='---', width=10, font=font)
         self.lbl_current_angle.grid(column=8, row=1 + row)
         #self.servo.set_widget(self.lbl_current_angle)
-        
+       
         self.update()
 
     def update(self):
@@ -1230,7 +1548,7 @@ class ServoGridRow():
                 self.lbl_state.config(text='ON', foreground='white', background='black')
             else:
                 self.lbl_state.config(text='OFF', foreground='black', background='white')
-            
+           
             self.lbl_target_angle.config(text=self.servo.get_target_angle())
             self.lbl_current_angle.config(text=self.servo.get_current_angle())
             #print(f'set widget {self.row} for servo {self.servo.index}')
@@ -1322,7 +1640,7 @@ class ButtonGridRow():
     and buttons and labels on the row will change and reflect its state, but
     which (real) button that is can _vary depending on what offset is.
     """
-    
+   
     offset = 0
 
     def show():
@@ -1400,7 +1718,7 @@ class ButtonGridRow():
             self.lbl_off_list.config(text='---')
             self.lbl_on_list.config(text='---')
             self.lbl_state.config(text='---')
-            
+           
     def destroy_button(self):
         self.lbl_state.destroy()
 
@@ -1615,20 +1933,20 @@ class ServoWindow(tk.Tk):
     Content of each grid row is done in ServoGridRow.    
     """
     def __init__(self, *args, **kwargs):
-        
+       
         tk.Tk.__init__(self, *args, **kwargs)  # Note: super() does not work here
         if ON_LINE:
             self.title("P&D MRS ServoMaster")
         else:
             self.title("P&D MRS ServoMaster (off-line)")
-            
+           
         self.protocol('WM_DELETE_WINDOW', self.confirm_quit)
 
         self.heading_font = font.Font(slant="italic")
         self.label_font = font.Font()
 
         self.create_menubar()
-        
+       
         try:
             self.img = Image.open("servo_icon.png")
             self.img = ImageTk.PhotoImage(self.img)
@@ -1649,6 +1967,7 @@ class ServoWindow(tk.Tk):
         self.count_label = ttk.Label(text='---', font=self.heading_font)
         self.count_label.grid(column=7, row=NUMBER_OF_ROWS + 1)
 
+
     def create_menubar(self):
         # Doing this in its own function just to keep it isolated
         menu_font = font.Font(size=10)
@@ -1663,6 +1982,7 @@ class ServoWindow(tk.Tk):
         servos_menu.add_command(label="Centre all", command=ServoGridRow.centre_all, font=menu_font)
         servos_menu.add_command(label="Next " + str(INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
         servos_menu.add_command(label="Previous " + str(INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
+        servos_menu.add_command(label="Track plan...", command=TrackPlan.show, font=menu_font)
         menubar.add_cascade(label="Servos", menu=servos_menu, font=menu_font)
 
         leds_menu = Menu(menubar, tearoff=0)
@@ -1695,8 +2015,8 @@ class ServoWindow(tk.Tk):
         """
         Called when exit is selected from the menu or the x clicked in the top-right,
         this function will ask for confirmation before destroying the window.
-        
-        
+       
+       
         Checks QUIT_WITHOUT_CONFIRM - when developing the confirmation box is just annoying.
         """
         if QUIT_WITHOUT_CONFIRM:
@@ -1735,4 +2055,6 @@ if HEADLESS:
 
 else:
     window = ServoWindow()
+    if SHOW_TRACKPLAN:
+        TrackPlan.show()
     window.mainloop()
