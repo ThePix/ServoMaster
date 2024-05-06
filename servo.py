@@ -4,41 +4,9 @@ Copyright 2024 Andy joel and Preston&District MRS
 
 See here:
 https://github.com/ThePix/ServoMaster/wiki
+
+All configuration options are in config.py
 """
-
-
-#################################################################################
-# CONFIGURATION CONSTANTS
-
-ON_LINE = False                 # Set to False to test without connecting to I2C
-QUIT_WITHOUT_CONFIRM = True     # Set to True to skip the confirmation when quitting
-REPORT_SERVO_SWITCHING = True   # If True requests to change servos is logged to console
-TIME_FACTOR = 10.0              # Globally control servo speed
-NUMBER_OF_ROWS = 26             # Show this number of rows in the GUI
-INCREMENT = 10                  # Jump this number of rows in the GUI
-DESC_WIDTH = 24                 # The description for servos can be this long
-ANGLE_ADJUST = 5                # Up/down buttons change the angle this much
-SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
-SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
-START_CENTRED = False           # Servos go to the off position at turn on unless this is true
-
-# The rest are all for track plan
-SHOW_TRACKPLAN = True
-SHOW_GRID = True
-LINE_WIDTH = 4
-WIDTH = 800
-HEIGHT = 200
-X_SCALE = 50
-Y_SCALE = 10
-X_OFFSET = 150
-Y_OFFSET = 50
-X_MIRROR = True
-Y_MIRROR = True
-
-
-
-
-
 
 
 #################################################################################
@@ -52,7 +20,9 @@ import math
 import traceback
 from threading import Thread
 
-if ON_LINE:
+import config
+
+if config.ON_LINE:
     try:
         # Imports for I2C
         import board
@@ -166,7 +136,7 @@ class Servo(Device):
         self.speed = speed
         self.off_angle = off_angle * 100
         self.centre_angle = centre_angle * 100
-        if START_CENTRED:
+        if config.START_CENTRED:
             self.target_angle = centre_angle * 100
             self.current_angle = centre_angle * 100
             self.centred = True
@@ -193,7 +163,7 @@ class Servo(Device):
         else:
             self.graphic = None
 
-        if ON_LINE:
+        if config.ON_LINE:
             self.servo = servo_boards[self.board_no].servo[self.pin_no]
             print('..' + str(self.current_angle / 100))
             self.servo.angle = self.current_angle / 100
@@ -203,6 +173,9 @@ class Servo(Device):
        
        
     def is_here(self, x, y):
+        if not self.graphic:
+            return False
+
         if self.graphic['x'] != x:
             return False
            
@@ -223,9 +196,9 @@ class Servo(Device):
         main_colour = 'silver'
         branch_colour = 'silver'
         if self.current_angle == self.off_angle:
-            main_colour = 'green'
+            main_colour = config.POINT_COLOUR
         if self.current_angle == self.on_angle:
-            branch_colour = 'green'
+            branch_colour = config.POINT_COLOUR
            
         if self.main_colour != main_colour or self.branch_colour != branch_colour or full:
             if self.graphic['reverse']:
@@ -312,7 +285,7 @@ class Servo(Device):
         self.target_angle = self.on_angle if _turn_on else self.off_angle
         self.turn_on = _turn_on
         self.centred = False
-        if REPORT_SERVO_SWITCHING:
+        if config.REPORT_SERVO_SWITCHING:
             state = 'ON' if _turn_on else 'OFF'
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
        
@@ -323,7 +296,7 @@ class Servo(Device):
         """
         self.target_angle = self.centre_angle
         self.centred = True
-        if REPORT_SERVO_SWITCHING:
+        if config.REPORT_SERVO_SWITCHING:
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to centred')
        
     def set_angle(self, angle):
@@ -378,7 +351,7 @@ class Servo(Device):
                 diff = increment
             self.current_angle += diff
        
-        if ON_LINE:
+        if config.ON_LINE:
             print(self.current_angle)
             print(self.current_angle / 100)
             try:
@@ -457,7 +430,7 @@ class Connector(Device):
         print('self.y', self.y)
        
     def draw(self, trackplan):
-        trackplan.line(self.x, self.y, self.offset, "blue")
+        trackplan.line(self.x, self.y, self.offset, config.LINE_COLOUR)
 
     def write_to_file(self, f):
         super().write_to_file(f)
@@ -636,7 +609,7 @@ class Led(IOPin):
         super().__init__(board_no, pin_no)
         verify(self.board_no, 0, len(io_boards), 'I/O board number out of range for LED.')
         verify(self.pin_no, 0, 16, 'LED pin number out of range.')
-        if ON_LINE:
+        if config.ON_LINE:
             self.led = io_boards[self.board_no].get_pin(self.pin_no)
             self.led.switch_to_output(value=True)
         self.index = Led.count
@@ -646,7 +619,7 @@ class Led(IOPin):
         """ Sets the LED on or off. """
         #print(value)
         #print(self.index)
-        if ON_LINE:
+        if config.ON_LINE:
             self.led.value = not value
 
 
@@ -678,7 +651,7 @@ class PButton(IOPin):
         super().__init__(board_no, pin_no)
         verify(self.board_no, 0, len(io_boards), 'I/O board number out of range for button.')
         verify(self.pin_no, 0, 16, 'Button pin number out of range.')
-        if ON_LINE:
+        if config.ON_LINE:
             self.button = io_boards[self.board_no].get_pin(self.pin_no)
             self.button.switch_to_input(pull=digitalio.Pull.UP)
         self.widget = None
@@ -691,7 +664,7 @@ class PButton(IOPin):
         Only access the button state through this as it has exception handling
         to deal with issues (hopefully) and for testing with no I2C connected.
         """
-        if not ON_LINE:
+        if not config.ON_LINE:
             return False
        
         try:
@@ -806,7 +779,7 @@ class Flasher(Device):
         self.board_no = board_no
         self.pin_no = pin_no
         self.state = False
-        if ON_LINE:
+        if config.LINE_WIDTH:
             self.led = io_boards[self.board_no].get_pin(self.pin_no)
             self.led.switch_to_output(value=True)
         self.index = Flasher.count
@@ -834,7 +807,7 @@ class Flasher(Device):
         """ Sets the LED on or off. """
         #print(f'Flasher {self.id()} setting to {value}')
         self.state = value
-        if ON_LINE:
+        if config.LINE_WIDTH:
             self.led.value = not value
         if self.widget:
             if self.state:
@@ -909,14 +882,14 @@ class Flasher(Device):
 start_time = time.time()
 previous_time = start_time
 
-if ON_LINE:
+if config.ON_LINE:
     i2c = board.I2C()  # uses board.SCL and board.SDA
 io_boards = []
 servo_boards = []
 lcd_boards = []
 ups_boards = []
 def print_lcd(n, s):
-    if ON_LINE:
+    if config.ON_LINE:
         for i in range(len(lcd_boards)):
             lcd_boards[i].lcd_display_string(s, n)
 
@@ -954,7 +927,7 @@ def save():
     try:
         with open('servo.txt', 'w', encoding="utf-8") as f:
             # Save the boards
-            if ON_LINE:
+            if config.LINE_WIDTH:
                 for servo_board in servo_boards:
                     f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
                 for io_board in io_boards:
@@ -990,7 +963,7 @@ def save():
 
 # We can check devices are connected as they are loaded from file
 # so first get a list of addresses on the I2C bus
-if ON_LINE:
+if config.ON_LINE:
     i2c_devices = i2c.scan()
     print("INFO: Found I2C devices:", [hex(device_address) for device_address in i2c_devices])
 else:
@@ -1023,12 +996,12 @@ def load_device(line):
         return
    
     address = int(md.group(2), 16)
-    if ON_LINE and not address in i2c_devices:
+    if config.ON_LINE and not address in i2c_devices:
         print('ERROR: Device not found: ' + line)
         print('This is not going well; I am giving up!\nYou need to ensure the I2C boards are connected\nand correctly configured in "servo.txt".\nGood luck...')
         exit()
                         
-    if ON_LINE:
+    if config.ON_LINE:
         match md.group(1):
             case 'S':
                 servo_boards.append(ServoKit(channels=16, address=address))
@@ -1174,7 +1147,7 @@ def main_loop():
         now_time = time.time()
         elapsed = now_time - previous_time
         previous_time = now_time
-        increment = TIME_FACTOR * elapsed
+        increment = config.TIME_FACTOR * elapsed
        
         # If the GUI is up, then count_label is a Label object
         # and can be updated with the loop count to show it is going
@@ -1194,7 +1167,7 @@ def main_loop():
         # HANDLE UPS
         # Only do this every 100 loops; it is not going to change much
         # Get values from device
-        # If below SHUTDOWN_AT% and draining, shutdown
+        # If below config.SHUTDOWN_AT% and draining, shutdown
         # Otherwise report to GUI
         if loop_count % 100 == 0 and len(ups_boards) > 0:
             bus_voltage = ups_boards[0].getBusVoltage_V()             # voltage on V- (load side)
@@ -1202,7 +1175,7 @@ def main_loop():
             current = ups_boards[0].getCurrent_mA()                   # current in mA
             # power = ups_boards[0].getPower_W()                        # power in W
             percent_remaining = (bus_voltage - 6)/2.4*100
-            if percent_remaining < SHUTDOWN_AT and current < 0:
+            if percent_remaining < config.SHUTDOWN_AT and current < 0:
                 print("Battery supply about to expire - shutting down.")
                 os.system("sudo shutdown -h now")
             if window and window.power_label:
@@ -1247,7 +1220,7 @@ def main_loop():
                 print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
                 leds[request['servo']].set(True)
-                if REPORT_SERVO_SWITCHING:
+                if config.REPORT_SERVO_SWITCHING:
                     ident = leds[request['servo']].id()
                     print(f'INFO: LED on {ident}')
             request['action'] = False
@@ -1256,7 +1229,7 @@ def main_loop():
                 print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
                 leds[request['servo']].set(False)
-                if REPORT_SERVO_SWITCHING:
+                if config.REPORT_SERVO_SWITCHING:
                     ident = leds[request['servo']].id()
                     print(f'INFO: LED off {ident}')
             request['action'] = False
@@ -1287,7 +1260,7 @@ def main_loop():
         if loop_count % 100 == 50 and trackplan:
             trackplan.redraw()
 
-        time.sleep(SLEEP)
+        time.sleep(config.SLEEP)
 
     print("INFO: Main loop terminated.")
 
@@ -1353,8 +1326,8 @@ class TrackPlan(tk.Toplevel):
        
 
     def __init__(self, window):
-        super().__init__(window, width=WIDTH, height=HEIGHT + 24)
-        self.title('Track Plan')
+        super().__init__(window, width=config.WIDTH, height=config.HEIGHT + 24)
+        self.title('TrackPlan: ' + config.TITLE)
        
         try:
             self.img = Image.open("servo_icon.png")
@@ -1363,19 +1336,13 @@ class TrackPlan(tk.Toplevel):
             self.img = None
             print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
 
-        # top_frame = tk.Frame(self, bg="#6FAFE7", width=WIDTH)
-        # top_frame.pack()
-        # if self.img:
-            # ttk.Label(top_frame, image=self.img).pack(side='left', anchor='nw')
-        # label = tk.Label(top_frame, text='Left click for straight, right click for branch').pack(side='left')
         if self.img:
             ttk.Label(self, image=self.img).place(x=0, y=0)
         label = tk.Label(self, text='Left click a point for straight, right click for branch').place(x=40,y=0)
        
        
-        self.canvas = tk.Canvas(self, width=WIDTH, height=HEIGHT)
+        self.canvas = tk.Canvas(self, width=config.WIDTH, height=config.HEIGHT)
         self.canvas.place(x=0,y=24)
-        #self.canvas.pack(fill=tk.BOTH, expand=1)
         self.canvas.bind('<Button-1>', TrackPlan.left_click)
         self.canvas.bind('<Button-3>', TrackPlan.right_click)
         self.redraw(True)
@@ -1384,9 +1351,9 @@ class TrackPlan(tk.Toplevel):
     def redraw(self, full=False):
         if full:
             self.canvas.delete(tk.ALL)
-            if SHOW_GRID:
-                for i in range(math.floor(WIDTH / X_SCALE)):
-                    for j in range(math.floor(HEIGHT / Y_SCALE)):
+            if config.SHOW_GRID:
+                for i in range(math.floor(config.WIDTH / config.X_SCALE)):
+                    for j in range(math.floor(config.HEIGHT / config.Y_SCALE)):
                         self.canvas.create_line(TrackPlan._derive_x(i), TrackPlan._derive_y(j), TrackPlan._derive_x(i) + 1, TrackPlan._derive_y(j), fill='black', width=1)
             for el in decorators:
                 el.draw(self)
@@ -1396,37 +1363,37 @@ class TrackPlan(tk.Toplevel):
            
     # Convert a grid position to pixels
     def _derive_x(x):
-        n = x * X_SCALE + X_OFFSET
-        return WIDTH - n if X_MIRROR else n
+        n = x * config.X_SCALE + config.X_OFFSET
+        return config.WIDTH - n if config.X_MIRROR else n
 
     def _derive_y(y):
-        n = HEIGHT - y * Y_SCALE - Y_OFFSET
-        return HEIGHT - n if Y_MIRROR else n
+        n = config.HEIGHT - y * config.Y_SCALE - config.Y_OFFSET
+        return config.HEIGHT - n if config.Y_MIRROR else n
            
            
     # Convert a pixel position to grid
     def _underive_x(x):
-        if X_MIRROR:
-            x = WIDTH - x
-        return math.floor((x - X_OFFSET) / X_SCALE)
+        if config.X_MIRROR:
+            x = config.WIDTH - x
+        return math.floor((x - config.X_OFFSET) / config.X_SCALE)
 
     def _underive_y(y):
-        if Y_MIRROR:
-            y = HEIGHT - y
-        return math.floor((HEIGHT - y - Y_OFFSET) / Y_SCALE)
+        if config.Y_MIRROR:
+            y = config.HEIGHT - y
+        return math.floor((config.HEIGHT - y - config.Y_OFFSET) / config.Y_SCALE)
 
 
 
 
            
     def line(self, x, y, dy, c):
-        self.canvas.create_line(TrackPlan._derive_x(x), TrackPlan._derive_y(y), TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y + dy), fill=c, width=LINE_WIDTH)
+        self.canvas.create_line(TrackPlan._derive_x(x), TrackPlan._derive_y(y), TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y + dy), fill=c, width=config.LINE_WIDTH)
 
     def r_line(self, x, y, dy, c):
-        self.canvas.create_line(TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y), TrackPlan._derive_x(x), TrackPlan._derive_y(y + dy), fill=c, width=LINE_WIDTH)
+        self.canvas.create_line(TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y), TrackPlan._derive_x(x), TrackPlan._derive_y(y + dy), fill=c, width=config.LINE_WIDTH)
 
     def platform(self, x, y):
-        self.canvas.create_line(TrackPlan._derive_x(x), TrackPlan._derive_y(y + 0.5), TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y + 0.5), fill='grey', width=Y_SCALE)
+        self.canvas.create_line(TrackPlan._derive_x(x), TrackPlan._derive_y(y + 0.5), TrackPlan._derive_x(x + 1), TrackPlan._derive_y(y + 0.5), fill='grey', width=config.Y_SCALE)
 
     def text(self, x, y, s):
         self.canvas.create_text(TrackPlan._derive_x(x), TrackPlan._derive_y(y + 0.5), text=s, fill="black", font=('Helvetica 15 bold'))
@@ -1464,17 +1431,17 @@ class ServoGridRow():
             row.update()
    
     def offset_plus_10():
-        if ServoGridRow.offset > len(servos) - INCREMENT:
+        if ServoGridRow.offset > len(servos) - config.INCREMENT:
             print('BAD INPUT: Trying to go beyond end!')
             return
-        ServoGridRow.offset += INCREMENT
+        ServoGridRow.offset += config.INCREMENT
         ServoGridRow.set_offset()
 
     def offset_minus_10():
         if ServoGridRow.offset == 0:
             print('BAD INPUT: Trying to go beyond start!')
             return
-        ServoGridRow.offset -= INCREMENT
+        ServoGridRow.offset -= config.INCREMENT
         ServoGridRow.set_offset()
 
     def set_offset():
@@ -1488,7 +1455,7 @@ class ServoGridRow():
         if img:
             ttk.Label(width=5, font=font, image=img).grid(column=0, row=0)
         ttk.Label(text='ID', width=7, font=font).grid(column=1, row=0)
-        ttk.Label(text='Description', width=DESC_WIDTH, font=font).grid(column=2, row=0)
+        ttk.Label(text='Description', width=config.DESC_WIDTH, font=font).grid(column=2, row=0)
         ttk.Label(text='Switch', font=font).grid(column=3, row=0)
         ttk.Label(text='State', width=10, font=font).grid(column=4, row=0)
         ttk.Label(text='Target', width=10, font=font).grid(column=7, row=0)
@@ -1504,7 +1471,7 @@ class ServoGridRow():
         self.lbl_id = ttk.Label(text='---', width=7, font=font)
         self.lbl_id.grid(column=1, row=1 + row)
 
-        self.lbl_desc = ttk.Label(text='---', width=DESC_WIDTH, font=font)
+        self.lbl_desc = ttk.Label(text='---', width=config.DESC_WIDTH, font=font)
         self.lbl_desc.grid(column=2, row=1 + row)
 
         self.btn_on_off = ttk.Button(text="On/Off")
@@ -1586,24 +1553,24 @@ class ServoGridRow():
             return
 
         if self.servo.centred:
-            if self.servo.centre_angle > 17000 - ANGLE_ADJUST * 100:
+            if self.servo.centre_angle > 17000 - config.ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go over 170')
                 return
-            self.servo.centre_angle += ANGLE_ADJUST * 100
+            self.servo.centre_angle += config.ANGLE_ADJUST * 100
            
         elif self.servo.turn_on:
-            if self.servo.on_angle > 17000 - ANGLE_ADJUST * 100:
+            if self.servo.on_angle > 17000 - config.ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go over 170')
                 return
-            self.servo.on_angle += ANGLE_ADJUST * 100
+            self.servo.on_angle += config.ANGLE_ADJUST * 100
            
         else:
-            if self.servo.off_angle > 17000 - ANGLE_ADJUST * 100:
+            if self.servo.off_angle > 17000 - config.ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go over 170')
                 return
-            self.servo.off_angle += ANGLE_ADJUST * 100
+            self.servo.off_angle += config.ANGLE_ADJUST * 100
 
-        self.servo.target_angle += ANGLE_ADJUST * 100
+        self.servo.target_angle += config.ANGLE_ADJUST * 100
         self.lbl_target_angle.config(text=self.servo.get_target_angle())
 
     def down_button(self, event):
@@ -1613,24 +1580,24 @@ class ServoGridRow():
             return
 
         if self.servo.centred:
-            if self.servo.centre_angle < 1000 + ANGLE_ADJUST * 100:
+            if self.servo.centre_angle < 1000 + config.ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go under 10')
                 return
-            self.servo.centre_angle -= ANGLE_ADJUST * 100
+            self.servo.centre_angle -= config.ANGLE_ADJUST * 100
            
         elif self.servo.turn_on:
-            if self.servo.on_angle < 1000 + ANGLE_ADJUST * 100:
+            if self.servo.on_angle < 1000 + config.ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go under 10')
                 return
-            self.servo.on_angle -= ANGLE_ADJUST * 100
+            self.servo.on_angle -= config.ANGLE_ADJUST * 100
            
         else:
-            if self.servo.off_angle < 1000 + ANGLE_ADJUST * 100:
+            if self.servo.off_angle < 1000 + config.ANGLE_ADJUST * 100:
                 print('BAD INPUT: Cannot go under 10')
                 return
-            self.servo.off_angle -= ANGLE_ADJUST * 100
+            self.servo.off_angle -= config.ANGLE_ADJUST * 100
 
-        self.servo.target_angle -= ANGLE_ADJUST * 100
+        self.servo.target_angle -= config.ANGLE_ADJUST * 100
         self.lbl_target_angle.config(text=self.servo.get_target_angle())
 
 
@@ -1645,9 +1612,9 @@ class ButtonGridRow():
 
     def show():
         newWindow = ButtonsWindow(window)
-        newWindow.title('Buttons')
+        newWindow.title('Buttons: ' + config.TITLE)
         ButtonGridRow.headers(newWindow)
-        for i in range(NUMBER_OF_ROWS):
+        for i in range(config.NUMBER_OF_ROWS):
             button_grid_rows.append(ButtonGridRow(newWindow, i))
 
     def headers(win):
@@ -1658,17 +1625,17 @@ class ButtonGridRow():
         ttk.Label(win, text='State', font=window.heading_font, width=7).grid(column=4, row=0)
 
     def offset_plus_10():
-        if ButtonGridRow.offset > len(buttons) - INCREMENT:
+        if ButtonGridRow.offset > len(buttons) - config.INCREMENT:
             print('BAD INPUT: Trying to go beyond end!')
             return
-        ButtonGridRow.offset += INCREMENT
+        ButtonGridRow.offset += config.INCREMENT
         ButtonGridRow.set_offset()
 
     def offset_minus_10():
         if ButtonGridRow.offset == 0:
             print('BAD INPUT: Trying to go beyond start!')
             return
-        ButtonGridRow.offset -= INCREMENT
+        ButtonGridRow.offset -= config.INCREMENT
         ButtonGridRow.set_offset()
 
 
@@ -1736,9 +1703,9 @@ class LedGridRow():
         """ Responds to a menu click to show the window for LEDs"""
 
         newWindow = Toplevel(window)
-        newWindow.title('LEDs')
+        newWindow.title('LEDs: ' +  + config.TITLE)
         LedGridRow.headers(newWindow)
-        for i in range(NUMBER_OF_ROWS):
+        for i in range(config.NUMBER_OF_ROWS):
             led_grid_rows.append(LedGridRow(newWindow, i))
            
     def all_leds_on():
@@ -1757,17 +1724,17 @@ class LedGridRow():
         ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
 
     def offset_plus_10():
-        if LedGridRow.offset > len(leds) - INCREMENT:
+        if LedGridRow.offset > len(leds) - config.INCREMENT:
             print('BAD INPUT: Trying to go beyond end!')
             return
-        LedGridRow.offset += INCREMENT
+        LedGridRow.offset += config.INCREMENT
         LedGridRow.set_offset()
 
     def offset_minus_10():
         if LedGridRow.offset == 0:
             print('BAD INPUT: Trying to go beyond start!')
             return
-        LedGridRow.offset -= INCREMENT
+        LedGridRow.offset -= config.INCREMENT
         LedGridRow.set_offset()
 
 
@@ -1844,9 +1811,9 @@ class FlasherGridRow():
         """ Responds to a menu click to show the window for LEDs"""
 
         newWindow = Toplevel(window)
-        newWindow.title('Flashers')
+        newWindow.title('Flashers: ' + config.TITLE)
         FlasherGridRow.headers(newWindow)
-        for i in range(NUMBER_OF_ROWS):
+        for i in range(config.NUMBER_OF_ROWS):
             led_grid_rows.append(FlasherGridRow(newWindow, i))
            
     def headers(win):
@@ -1856,17 +1823,17 @@ class FlasherGridRow():
         #ttk.Label(win, text='On servos', width=20, font=window.heading_font).grid(column=3, row=0)
 
     def offset_plus_10():
-        if FlasherGridRow.offset > len(leds) - INCREMENT:
+        if FlasherGridRow.offset > len(leds) - config.INCREMENT:
             print('BAD INPUT: Trying to go beyond end!')
             return
-        FlasherGridRow.offset += INCREMENT
+        FlasherGridRow.offset += config.INCREMENT
         FlasherGridRow.set_offset()
 
     def offset_minus_10():
         if FlasherGridRow.offset == 0:
             print('BAD INPUT: Trying to go beyond start!')
             return
-        FlasherGridRow.offset -= INCREMENT
+        FlasherGridRow.offset -= config.INCREMENT
         FlasherGridRow.set_offset()
 
 
@@ -1935,10 +1902,10 @@ class ServoWindow(tk.Tk):
     def __init__(self, *args, **kwargs):
        
         tk.Tk.__init__(self, *args, **kwargs)  # Note: super() does not work here
-        if ON_LINE:
-            self.title("P&D MRS ServoMaster")
+        if config.ON_LINE:
+            self.title("ServoMaster: " + config.TITLE)
         else:
-            self.title("P&D MRS ServoMaster (off-line)")
+            self.title("ServoMaster: "  + config.TITLE + " (off-line)")
            
         self.protocol('WM_DELETE_WINDOW', self.confirm_quit)
 
@@ -1956,16 +1923,16 @@ class ServoWindow(tk.Tk):
 
         # The widgets that do the work
         ServoGridRow.headers(self.img, self.heading_font)
-        for i in range(NUMBER_OF_ROWS):
+        for i in range(config.NUMBER_OF_ROWS):
             servo_grid_rows.append(ServoGridRow(i, self.label_font))
 
-        ttk.Label(text='Power supply:', font=self.heading_font).grid(column=1, row=NUMBER_OF_ROWS + 1)
+        ttk.Label(text='Power supply:', font=self.heading_font).grid(column=1, row=config.NUMBER_OF_ROWS + 1)
         self.power_label = ttk.Label(text='---', font=self.heading_font)
-        self.power_label.grid(column=2, row=NUMBER_OF_ROWS + 1)
+        self.power_label.grid(column=2, row=config.NUMBER_OF_ROWS + 1)
 
-        ttk.Label(text='Cycle count:', font=self.heading_font).grid(column=6, row=NUMBER_OF_ROWS + 1)
+        ttk.Label(text='Cycle count:', font=self.heading_font).grid(column=6, row=config.NUMBER_OF_ROWS + 1)
         self.count_label = ttk.Label(text='---', font=self.heading_font)
-        self.count_label.grid(column=7, row=NUMBER_OF_ROWS + 1)
+        self.count_label.grid(column=7, row=config.NUMBER_OF_ROWS + 1)
 
 
     def create_menubar(self):
@@ -1980,8 +1947,8 @@ class ServoWindow(tk.Tk):
 
         servos_menu = Menu(menubar, tearoff=0)
         servos_menu.add_command(label="Centre all", command=ServoGridRow.centre_all, font=menu_font)
-        servos_menu.add_command(label="Next " + str(INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
-        servos_menu.add_command(label="Previous " + str(INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
+        servos_menu.add_command(label="Next " + str(config.INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
+        servos_menu.add_command(label="Previous " + str(config.INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
         servos_menu.add_command(label="Track plan...", command=TrackPlan.show, font=menu_font)
         menubar.add_cascade(label="Servos", menu=servos_menu, font=menu_font)
 
@@ -1989,20 +1956,20 @@ class ServoWindow(tk.Tk):
         leds_menu.add_command(label="LEDs...", command=LedGridRow.show, font=menu_font)
         leds_menu.add_command(label="All on", command=LedGridRow.all_leds_on, font=menu_font)
         leds_menu.add_command(label="All off", command=LedGridRow.all_leds_off, font=menu_font)
-        leds_menu.add_command(label="Next " + str(INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
-        leds_menu.add_command(label="Previous " + str(INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
+        leds_menu.add_command(label="Next " + str(config.INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
+        leds_menu.add_command(label="Previous " + str(config.INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
         menubar.add_cascade(label="LEDs", menu=leds_menu, font=menu_font)
 
         buttons_menu = Menu(menubar, tearoff=0)
         buttons_menu.add_command(label="Buttons...", command=ButtonGridRow.show, font=menu_font)
-        buttons_menu.add_command(label="Next " + str(INCREMENT), command=ButtonGridRow.offset_plus_10, font=menu_font)
-        buttons_menu.add_command(label="Previous " + str(INCREMENT), command=ButtonGridRow.offset_minus_10, font=menu_font)
+        buttons_menu.add_command(label="Next " + str(config.INCREMENT), command=ButtonGridRow.offset_plus_10, font=menu_font)
+        buttons_menu.add_command(label="Previous " + str(config.INCREMENT), command=ButtonGridRow.offset_minus_10, font=menu_font)
         menubar.add_cascade(label="Buttons", menu=buttons_menu, font=menu_font)
 
         flashers_menu = Menu(menubar, tearoff=0)
         flashers_menu.add_command(label="Flashers...", command=FlasherGridRow.show, font=menu_font)
-        flashers_menu.add_command(label="Next " + str(INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
-        flashers_menu.add_command(label="Previous " + str(INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
+        flashers_menu.add_command(label="Next " + str(config.INCREMENT), command=LedGridRow.offset_plus_10, font=menu_font)
+        flashers_menu.add_command(label="Previous " + str(config.INCREMENT), command=LedGridRow.offset_minus_10, font=menu_font)
         menubar.add_cascade(label="Flashers", menu=flashers_menu, font=menu_font)
 
         help_menu = Menu(menubar, tearoff=0)
@@ -2017,9 +1984,9 @@ class ServoWindow(tk.Tk):
         this function will ask for confirmation before destroying the window.
        
        
-        Checks QUIT_WITHOUT_CONFIRM - when developing the confirmation box is just annoying.
+        Checks config.QUIT_WITHOUT_CONFIRM - when developing the confirmation box is just annoying.
         """
-        if QUIT_WITHOUT_CONFIRM:
+        if config.QUIT_WITHOUT_CONFIRM:
             self.terminate_gui()
         else:
             response = messagebox.askyesno('Exit','Are you sure you want to exit?')
@@ -2055,6 +2022,6 @@ if HEADLESS:
 
 else:
     window = ServoWindow()
-    if SHOW_TRACKPLAN:
+    if config.SHOW_TRACKPLAN:
         TrackPlan.show()
     window.mainloop()
