@@ -151,15 +151,21 @@ class Servo(Device):
         self.off_leds = []
         self.on_buttons = []
         self.off_buttons = []
+        self.main_colour = None
+        self.branch_colour = None
        
         if graphic:
-            md = re.match(r'(r)?([ABY]) (\d), (\d)', _graphic)
-            self.graphic = {
-                'reverse':md.group(1) == 'r',
-                'shape':md.group(2),
-                'x':int(md.group(3)),
-                'y':int(md.group(4)),
-            }
+            md = re.match(r'(r)?([ABY]) (\d+), (\d+)', graphic)
+            if md:
+                self.graphic = {
+                    'reverse':md.group(1) == 'r',
+                    'shape':md.group(2),
+                    'x':int(md.group(3)),
+                    'y':int(md.group(4)),
+                }
+            else:
+                self.graphic = None
+                print('ERROR: Badly formatted line for servo (graphic data): ' + graphic)
         else:
             self.graphic = None
 
@@ -203,6 +209,7 @@ class Servo(Device):
         if self.main_colour != main_colour or self.branch_colour != branch_colour or full:
             if self.graphic['reverse']:
                 # Main
+                # For Y, 
                 offset = -1 if self.graphic['shape'] == 'Y' else 0
                 trackplan.r_line(self.graphic['x'], self.graphic['y'], offset, main_colour)
                
@@ -409,7 +416,7 @@ class Connector(Device):
     }
 
     def create(s):
-        md = re.match(r'\-c ?([-uUdD]) (\d), (\d) ?(.*)', s)
+        md = re.match(r'\-c ?([-uUdD]) (\d+), (\d+) ?(.*)', s)
         if md:
             conn = Connector(md.group(1), int(md.group(2)), int(md.group(3)), md.group(4))
             decorators.append(conn)
@@ -425,9 +432,6 @@ class Connector(Device):
         self.desc = desc
         self.x = x
         self.y = y
-        print('self.offset', self.offset)
-        print('self.x', self.x)
-        print('self.y', self.y)
        
     def draw(self, trackplan):
         trackplan.line(self.x, self.y, self.offset, config.LINE_COLOUR)
@@ -443,7 +447,7 @@ class Platform(Device):
     """
 
     def create(s):
-        md = re.match(r'\-p ?(\d), (\d) ?(.*)', s)
+        md = re.match(r'\-p ?(\d+), (\d+) ?(.*)', s)
         if md:
             p = Platform(int(md.group(1)), int(md.group(2)), md.group(3))
             decorators.append(p)
@@ -472,7 +476,7 @@ class Text(Device):
     """
 
     def create(s):
-        md = re.match(r'\-t ?(\d), (\d) (.+)', s)
+        md = re.match(r'\-t ?(\d+), (\d+) (.+)', s)
         if md:
             t = Text(int(md.group(1)), int(md.group(2)), md.group(3))
             decorators.append(t)
@@ -1068,8 +1072,9 @@ print(f"INFO: Found {len(servos)} servo(s).")
 print(f"INFO: Found {len(buttons)} button(s).")
 print(f"INFO: Found {len(leds)} indicator LED(s).")
 print(f"INFO: Found {len(flashers)} flashing LED(s).")
-for servo in servos:
-    servo.sanity_check()
+if not config.SUPPRESS_WARNINGS:
+    for servo in servos:
+        servo.sanity_check()
 
 
        
@@ -1338,7 +1343,7 @@ class TrackPlan(tk.Toplevel):
 
         if self.img:
             ttk.Label(self, image=self.img).place(x=0, y=0)
-        label = tk.Label(self, text='Left click a point for straight, right click for branch').place(x=40,y=0)
+        label = tk.Label(self, text='Left click a point for straight, right click for branch (for a Y, the lower counters as straight)').place(x=40,y=0)
        
        
         self.canvas = tk.Canvas(self, width=config.WIDTH, height=config.HEIGHT)

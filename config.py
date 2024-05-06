@@ -9,19 +9,20 @@ ANGLE_ADJUST = 5                # Up/down buttons change the angle this much
 SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
 SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
 START_CENTRED = False           # Servos go to the off position at turn on unless this is true
-TITLE = 'My Example Layout'     # Appears on the main window
+TITLE = 'New N Gauge Layout'     # Appears on the main window
+SUPPRESS_WARNINGS = True        # Do not warn if a serno has no LED or button
 
 # The rest are all for track plan
 SHOW_TRACKPLAN = True
 SHOW_GRID = True
 LINE_WIDTH = 4
-WIDTH = 800
-HEIGHT = 200
+WIDTH = 850
+HEIGHT = 480
 X_SCALE = 50
 Y_SCALE = 10
-X_OFFSET = 150
-Y_OFFSET = 50
-X_MIRROR = True
-Y_MIRROR = True
+X_OFFSET = 0
+Y_OFFSET = 0
+X_MIRROR = False
+Y_MIRROR = False
 POINT_COLOUR = 'green'
 LINE_COLOUR = 'blue'
