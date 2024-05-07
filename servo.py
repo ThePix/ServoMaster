@@ -1313,7 +1313,7 @@ class TrackPlan(tk.Toplevel):
         if not trackplan:
             trackplan = TrackPlan(window)
             trackplan.redraw(True)
-       
+            trackplan.geometry("+%d+%d" %(10,80))       
        
        
     def left_click(event):
@@ -1327,7 +1327,13 @@ class TrackPlan(tk.Toplevel):
         y = TrackPlan._underive_y(event.y)
         for servo in servos:
             if servo.is_here(x, y):
-                servo.set(right_click)
+                if config.LEFT_CLICK_ONLY:
+                    if servo.current_angle == servo.on_angle:
+                        servo.set(False)
+                    if servo.current_angle == servo.off_angle:
+                        servo.set(True)
+                else:
+                    servo.set(right_click)
        
 
     def __init__(self, window):
@@ -1343,7 +1349,10 @@ class TrackPlan(tk.Toplevel):
 
         if self.img:
             ttk.Label(self, image=self.img).place(x=0, y=0)
-        label = tk.Label(self, text='Left click a point for straight, right click for branch (for a Y, the lower counters as straight)').place(x=40,y=0)
+        if config.LEFT_CLICK_ONLY:
+            label = tk.Label(self, text='Left click a point to change it (no effect while moving)').place(x=40,y=0)
+        else:
+            label = tk.Label(self, text='Left click a point for straight, right click for branch (for a Y, the lower counters as straight)').place(x=40,y=0)
        
        
         self.canvas = tk.Canvas(self, width=config.WIDTH, height=config.HEIGHT)
@@ -2029,4 +2038,5 @@ else:
     window = ServoWindow()
     if config.SHOW_TRACKPLAN:
         TrackPlan.show()
+        window.geometry("+%d+%d" %(10, config.HEIGHT + 150))
     window.mainloop()

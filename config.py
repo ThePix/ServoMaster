@@ -26,3 +26,4 @@ X_MIRROR = False
 Y_MIRROR = False
 POINT_COLOUR = 'green'
 LINE_COLOUR = 'blue'
+LEFT_CLICK_ONLY = True
