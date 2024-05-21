@@ -171,8 +171,6 @@ class Servo(Device):
 
         if config.ON_LINE:
             self.servo = servo_boards[self.board_no].servo[self.pin_no]
-            print('..' + str(self.current_angle / 100))
-            self.servo.angle = self.current_angle / 100
         self.turn_on = False
         self.index = Servo.count
         Servo.count += 1
@@ -203,8 +201,12 @@ class Servo(Device):
         branch_colour = 'silver'
         if self.current_angle == self.off_angle:
             main_colour = config.POINT_COLOUR
+            if self.widget:
+                self.state_label.config(text='OFF', foreground='black', background='white')
         if self.current_angle == self.on_angle:
             branch_colour = config.POINT_COLOUR
+            if self.widget:
+                self.state_label.config(text='ON', foreground='white', background='black')
            
         if self.main_colour != main_colour or self.branch_colour != branch_colour or full:
             if self.graphic['reverse']:
@@ -251,12 +253,13 @@ class Servo(Device):
         for b in self.off_buttons:
             f.write(f'b off {b.board_no}.{b.pin_no}\n')
        
-    def set_widget(self, _widget):
+    def set_widget(self, angle_label, state_label):
         """
         Set a Label widget that the servo can report its angle to.
         Or set to None to stop it.
         """
-        self.widget = _widget
+        self.widget = angle_label
+        self.state_label = state_label
        
     def sanity_check(self):
         """ Check for matching numbers of buttons and LEDS. """
@@ -341,6 +344,8 @@ class Servo(Device):
             if self.moving:
                 self.moving = False
                 self.set_leds()
+                if config.ON_LINE:
+                    self.servo.angle = None
             return False
 
         if not self.moving:
@@ -359,8 +364,6 @@ class Servo(Device):
             self.current_angle += diff
        
         if config.ON_LINE:
-            print(self.current_angle)
-            print(self.current_angle / 100)
             try:
                 self.servo.angle = self.current_angle / 100
             except OSError as err:
@@ -621,8 +624,6 @@ class Led(IOPin):
        
     def set(self, value):
         """ Sets the LED on or off. """
-        #print(value)
-        #print(self.index)
         if config.ON_LINE:
             self.led.value = not value
 
@@ -809,7 +810,6 @@ class Flasher(Device):
 
     def set(self, value):
         """ Sets the LED on or off. """
-        #print(f'Flasher {self.id()} setting to {value}')
         self.state = value
         if config.LINE_WIDTH:
             self.led.value = not value
@@ -952,7 +952,6 @@ def save():
 
             # Now save the servos and related data
             for lst in [servos, flashers, decorators]:
-                print(len(lst))
                 for el in lst:
                     el.write_to_file(f)
                
@@ -1093,11 +1092,11 @@ patterns = [
     re.compile("^l(\\d+) off$", re.IGNORECASE),
 ]
 
+"""
+Gets input from the command line, sets the request object for mail loop to deal with.
+"""
+
 def input_loop():
-    """
-    Gets input from the command line, sets the request object
-    for mail loop to deal with.
-    """
     print("INFO: Ready for input at the command line")
     while not request['action'] == 'terminate':
         s = input()
@@ -1460,7 +1459,7 @@ class ServoGridRow():
 
     def set_offset():
         for servo in servos:
-            servo.set_widget(None)
+            servo.set_widget(None, None)
         for row in servo_grid_rows:
             row.update()
 
@@ -1479,8 +1478,8 @@ class ServoGridRow():
         # When creating, the first servo is 0
         self.row = row             # The row in the table in the GUI
         #self.servo = servos[row]   # The current servo - but can change
-        self.lbl_index = ttk.Label(text=str(row), font=font)
-        self.lbl_index.grid(column=0, row=1 + row, pady=5)
+        #self.lbl_index = ttk.Label(text=str(row), font=font) # row number turns out to be confusing!
+        #self.lbl_index.grid(column=0, row=1 + row, pady=5)
        
         self.lbl_id = ttk.Label(text='---', width=7, font=font)
         self.lbl_id.grid(column=1, row=1 + row)
@@ -1519,7 +1518,7 @@ class ServoGridRow():
         """
         if 0 <= (self.row + self.offset) < len(servos):
             self.servo = servos[self.row + self.offset]
-            self.lbl_index.config(text=str(self.row + self.offset))
+            #self.lbl_index.config(text=str(self.row + self.offset))
             self.lbl_id.config(text=self.servo.id())
             self.lbl_desc.config(text=self.servo.desc)
             state = 'ON' if self.servo.turn_on else 'OFF'
@@ -1533,10 +1532,10 @@ class ServoGridRow():
             self.lbl_target_angle.config(text=self.servo.get_target_angle())
             self.lbl_current_angle.config(text=self.servo.get_current_angle())
             #print(f'set widget {self.row} for servo {self.servo.index}')
-            self.servo.set_widget(self.lbl_current_angle)
+            self.servo.set_widget(self.lbl_current_angle, self.lbl_state)
         else:
             self.servo = None
-            self.lbl_index.config(text='---')
+            #self.lbl_index.config(text='---')
             self.lbl_id.config(text='---')
             self.lbl_desc.config(text='---')
             self.lbl_state.config(text='---')    
@@ -1559,6 +1558,7 @@ class ServoGridRow():
             self.lbl_target_angle.config(text=self.servo.get_on_angle())
             request['action'] = 'on'
             request['servo'] = self.servo.index
+
 
     def up_button(self, event):
         """ When the Up button for this row is pressed. """
@@ -2027,6 +2027,24 @@ class ServoWindow(tk.Tk):
         messagebox.showinfo("Help", "Each row controls a servo. Switch the point from left to right and back using On/Off.\n\nThe first angle is the target - what the servo is heading for. The second angle is the current value.\n\nUse Up and Down to modify the target angle.\n\nRemember to do File - Save to save your changes before you exit the program.")
 
 
+"""
+Set the angle for each servo
+Need to do this to ensure the servos are where we expect them to be.
+Have already set the current angle in the initialiser
+Do it in sequence with slight delay so only drawing minimal power
+"""
+if config.ON_LINE:
+    for servo in servos:
+        print('INFOR: Setting servo ' + servo.id())
+        try:
+            self.servo.angle = self.current_angle / 100
+        except OSError as err:
+            print("ERROR: OSError {err}")
+            print("This may be because there is no ground or power connection\nto the servo board on the I2C side")
+            print("Terminating!")
+            exit()
+        time.sleep(0.1)
+        self.servo.angle = None
 
 
 
