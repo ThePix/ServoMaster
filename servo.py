@@ -2,10 +2,29 @@
 ServoMaster
 Copyright 2024 Andy joel and Preston&District MRS
 
+Version 1.4
+
 See here:
 https://github.com/ThePix/ServoMaster/wiki
 
 All configuration options are in config.py
+
+
+S - servoboard
+IO
+LCD
+UPS
+
+s - servo
+l - led
+r - relay
+b - button
+f - flasher
+- - trackplan
+
+
+
+
 """
 
 
@@ -56,8 +75,17 @@ def verify(n, min, max, msg):
     Note that n must be equal or greater than min, but less than max.
     """
     if n >= max or n < min:
-        print(f'{msg} Found {n}, expected that to be {min} or over and less than {max}')
+        print(f'ERROR: {msg} Found {n}, expected that to be {min} or over and less than {max}')
         exit()
+
+
+
+"""
+Custom exceptions so we can handle them neatly without losing info for the unexpected ones.
+"""
+class ServoConfigException(Exception):
+    pass
+
 
 
 #################################################################################
@@ -153,6 +181,8 @@ class Servo(Device):
         self.off_buttons = []
         self.main_colour = None
         self.branch_colour = None
+        self.on_relay = None
+        self.off_relay = None
        
         if graphic:
             md = re.match(r'(r)?([ABY]) (\d+), (\d+)', graphic)
@@ -228,7 +258,6 @@ class Servo(Device):
                 trackplan.line(self.graphic['x'], self.graphic['y'], offset, branch_colour)
             self.main_colour = main_colour
             self.branch_colour = branch_colour
-
      
     def id(self):
         """ The ID is the 'board.pin'. """
@@ -237,17 +266,21 @@ class Servo(Device):
     def write_to_file(self, f):
         """ Writes not just this servo, but also connected buttons and LEDs. """
         super().write_to_file(f, True)
-        s = f's {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)}, '
+        s = f's {self.board_no}.{self.pin_no}, {self.speed}, {round(self.off_angle / 100)}, {round(self.centre_angle / 100)}, {round(self.on_angle / 100)},'
         if self.graphic:
             s += '['
             if self.graphic['reverse']:
                 s += 'r'
             s += f"{self.graphic['shape']} {self.graphic['x']}, {self.graphic['y']}]"
-        f.write(f'{s} {self.desc}\n')
+        f.write(f'{s} {self.desc.strip()}\n')
         for led in self.on_leds:
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
         for led in self.off_leds:
             f.write(f'l off {led.board_no}.{led.pin_no}\n')
+        for relay in self.on_relays:
+            f.write(f'r on {relay.board_no}.{relay.pin_no}\n')
+        for relay in self.off_relays:
+            f.write(f'r off {relay.board_no}.{relay.pin_no}\n')
         for b in self.on_buttons:
             f.write(f'b on {b.board_no}.{b.pin_no}\n')
         for b in self.off_buttons:
@@ -271,7 +304,6 @@ class Servo(Device):
             print(f'WARNING: Not found any "on" buttons for servo {self.id()} ({self.desc}).')
         elif len(self.off_buttons) != len(self.on_buttons):
             print(f'WARNING: Mismatch in the number of "on" and "off" buttons for servo {self.id()} ({self.desc}).')
-       
 
     def set_led(self, led, turn_on):
         """ Add the given LED to the list of "on" or "off" LEDs. """
@@ -279,6 +311,13 @@ class Servo(Device):
             self.on_leds.append(led)
         else:
             self.off_leds.append(led)
+
+    def set_relay(self, relay, turn_on):
+        """ Add the given relay to the list of "on" or "off" relays. """
+        if turn_on:
+            self.on_relay = relay
+        else:
+            self.off_relay = relay
 
     def set_button(self, button, turn_on):
         """ Add the given button to the list of "on" or "off" buttons. """
@@ -346,12 +385,24 @@ class Servo(Device):
                 self.set_leds()
                 if config.ON_LINE:
                     self.servo.angle = None
+                if self.off_relay:
+                    if self.target_angle == self.off_angle:
+                        self.off_relay.set(True)
+                    if self.target_angle == self.on_angle:
+                        self.on_relay.set(True)
+
+
             return False
 
         if not self.moving:
             # Could do this in set, but prefer here as set can be done repeatedly
             self.moving = True
             self.reset_leds()
+            if config.ON_LINE and self.off_relay:
+                 self.off_relay.set(False)
+                 self.on_relay.set(False)
+
+
         increment = elapsed * self.speed;
         # diff is then capped at that
         if diff > 0:
@@ -371,6 +422,7 @@ class Servo(Device):
                 print("This may be because there is no ground connection\nto the servo board on the I2C side")
                 print("Terminating!")
                 exit()
+                 
        
         if self.widget:
             self.widget.config(text=self.get_current_angle())
@@ -393,7 +445,9 @@ class Servo(Device):
                 led.set(True)
 
 
-
+"""
+Just used by the trackplan during setting up
+"""
 class Decorator(Device):
     def create(line):
         if line[0:2] == '-c':
@@ -404,7 +458,9 @@ class Decorator(Device):
             Text.create(line)
 
 
-
+"""
+Used by trackplan to draw a line connecting points.
+"""
 class Connector(Device):
     """
     Represents a connector - a non-functional line on the trackplan
@@ -444,6 +500,9 @@ class Connector(Device):
         f.write(f'-c {self.shape} {self.x}, {self.y} {self.desc}\n')
        
 
+"""
+Used by trackplan to draw a thick line representing a platform.
+"""
 class Platform(Device):
     """
     Represents a platform - decoration on the trackplan
@@ -473,6 +532,9 @@ class Platform(Device):
         f.write(f'-p {self.x}, {self.y} {self.desc}\n')
 
 
+"""
+Used by trackplan to draw text.
+"""
 class Text(Device):
     """
     Represents a platform - decoration on the trackplan
@@ -515,25 +577,23 @@ class IOPin(Device):
     Represents an I/O pin, superclass for buttons and LEDs.
     """
 
-    def create(klass, lst, not_lst, letter, s, servos):
+    def create(klass, lst, letter, s, servos):
         """
         Adds an I/O pin object, given a string
-        The string should consist of a "l" (for LED) or "b" (for button) to identify it as such
+        The string should consist of a "l" (for LED) or "b" (for button) or "r" (for relay) to identify it as such
         followed by (all separated with spaces):
            on/off
            the address - the board number, a dot and the pin number
         """
         md = re.match(letter + ' (on|off) (\\d+)\\.(\\d+)', s)
         if not md:
-            raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
+            raise ServoConfigException('ERROR: Badly formatted line for IOPin: ' + s)
         # get the data from the regex match
         turn_on = md.group(1) == 'on'
         board_no = int(md.group(2))
         pin_no = int(md.group(3))
         # is there already an item of the wrong sort assigned there? if so, that is an error
-        item = IOPin.find_in_list(not_lst, board_no, pin_no)
-        if item:
-            raise Exception(f'ERROR: Trying to set board/pin to something when already something else: {board_no}.{pin_no}')
+        IOPin.check_io(lst, board_no, pin_no)
         # is there already an LED assigned there? if not, we create one
         item = IOPin.find_in_list(lst, board_no, pin_no)
         if not item:
@@ -559,6 +619,20 @@ class IOPin(Device):
             if el.board_no == board_no and el.pin_no == pin_no:
                 return el
         return None
+       
+    def check_io(safe_lst, board_no, pin_no):
+        """
+        Checks if the board/pin is already in use.
+        If it is, an exception is thrown.
+        If it is good, does nothing
+        """
+        for lst in io_lists:
+            if lst == safe_lst:
+                continue
+            for el in lst:
+                if el.board_no == board_no and el.pin_no == pin_no:
+                    raise ServoConfigException(f'ERROR: Trying to set board/pin to something when already something else: {board_no}.{pin_no}')
+                
        
 
     def __init__(self, board_no, pin_no):
@@ -605,7 +679,7 @@ class Led(IOPin):
            the address - the board number, a dot and the pin number
         Uses IOPin.create to do most of the work
         """
-        led, turn_on = IOPin.create(Led, leds, buttons, 'l', s, servos)
+        led, turn_on = IOPin.create(Led, leds, 'l', s, servos)
         servo.set_led(led, turn_on)
 
 
@@ -628,6 +702,43 @@ class Led(IOPin):
             self.led.value = not value
 
 
+class Relay(IOPin):
+    """
+    Represents an input to a relay
+    """
+    count = 0
+
+    def create(s, servos):
+        """
+        Adds a Relay object, given a string.
+        The string should consist of a "r" to identify it
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        Uses IOPin.create to do most of the work
+        """
+        relay, turn_on = IOPin.create(Relay, relays, 'r', s, servos)
+        servo.set_relay(relay, turn_on)
+
+
+    def __init__(self, board_no, pin_no):
+        """
+        Constructor. Uses the super contructor, but also connects to the I/O board.
+        """
+        super().__init__(board_no, pin_no)
+        verify(self.board_no, 0, len(io_boards), 'I/O board number out of range for relay.')
+        verify(self.pin_no, 0, 16, 'Relay pin number out of range.')
+        if config.ON_LINE:
+            self.relay = io_boards[self.board_no].get_pin(self.pin_no)
+            self.relay.switch_to_output(value=True)
+        self.index = Relay.count
+        Relay.count += 1
+       
+    def set(self, value):
+        """ Sets the relay on or off. """
+        if config.ON_LINE:
+            self.relay.value = value
+
 
 #################################################################################
 
@@ -646,7 +757,7 @@ class PButton(IOPin):
            the address - the board number, a dot and the pin number
         Uses IOPin.create to do most of the work
         """
-        button, turn_on = IOPin.create(PButton, buttons, leds, 'b', s, servos)
+        button, turn_on = IOPin.create(PButton, buttons, 'b', s, servos)
         servo.set_button(button, turn_on)
 
     def __init__(self, board_no, pin_no):
@@ -725,19 +836,19 @@ class Flasher(Device):
           the start delay
           the flashing patttern as a string of dots and asterisks or the on time followed by the off time
         """
-        md = re.match('f (s|r|p)', s)
+        md = re.match('f(s|r|p)', s)
         if not md:
-            raise Exception('ERROR: Badly formatted line for Flasher: ' + s)
+            raise ServoConfigException('ERROR: Badly formatted line for Flasher: ' + s)
         if  md.group(1) == 'p':
             Flasher._p_create(s)
         else:
             Flasher._sr_create(s)
 
     def _sr_create(s):
-        # Used by create to create a standard or random flasher
-        md = re.match('f (s|r) (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+)', s)
+        # Used by create to create a standard or variable flasher
+        md = re.match('f(s|r) (\\d+)\\.(\\d+),? (\\d+),? (\\d+),? (\\d+)', s)
         if not md:
-            raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
+            raise ServoConfigException('ERROR: Badly formatted line for Flasher: ' + s)
         # get the data from the regex match
         board_no = int(md.group(2))
         pin_no = int(md.group(3))
@@ -746,31 +857,21 @@ class Flasher(Device):
         off = int(md.group(6))
         letter = md.group(1)
         # is there already an item of the wrong sort assigned there? if so, that is an error
-        if IOPin.find_in_list(leds, board_no, pin_no):
-            raise Exception(f'ERROR: Trying to set board/pin for flasher, but an indicator LED is already assigned: {board_no}.{pin_no}')
-        if IOPin.find_in_list(buttons, board_no, pin_no):
-            raise Exception(f'ERROR: Trying to set board/pin for flasher, but a button is already assigned: {board_no}.{pin_no}')
-        if IOPin.find_in_list(flashers, board_no, pin_no):
-            raise Exception(f'ERROR: Trying to set board/pin for flasher, but another flashing LED is already assigned: {board_no}.{pin_no}')
+        IOPin.check_io(None, board_no, pin_no)
         flashers.append(Flasher(board_no, pin_no, letter, start, on=on, off=off))
 
     def _p_create(s):
         # Used by create to create a pattern flasher
-        md = re.match('f p (\\d+)\\.(\\d+),? (\\d+),? ([\\.\\*]+)', s)
+        md = re.match('fp (\\d+)\\.(\\d+),? (\\d+),? ([\\.\\*]+)', s)
         if not md:
-            raise Exception('ERROR: Badly formatted line for IOPin: ' + s)
+            raise ServoConfigException('ERROR: Badly formatted line for Flasher: ' + s)
         # get the data from the regex match
         board_no = int(md.group(1))
         pin_no = int(md.group(2))
         start = int(md.group(3))
         pattern = md.group(4)
         # is there already an item of the wrong sort assigned there? if so, that is an error
-        if IOPin.find_in_list(leds, board_no, pin_no):
-            raise Exception(f'ERROR: Trying to set board/pin for flasher, but an indicator LED is already assigned: {board_no}.{pin_no}')
-        if IOPin.find_in_list(buttons, board_no, pin_no):
-            raise Exception(f'ERROR: Trying to set board/pin for flasher, but a button is already assigned: {board_no}.{pin_no}')
-        if IOPin.find_in_list(flashers, board_no, pin_no):
-            raise Exception(f'ERROR: Trying to set board/pin for flasher, but another flashing LED is already assigned: {board_no}.{pin_no}')
+        IOPin.check_io(None, board_no, pin_no)
         flashers.append(Flasher(board_no, pin_no, 'p', start, pattern=pattern))
 
 
@@ -784,7 +885,7 @@ class Flasher(Device):
         self.board_no = board_no
         self.pin_no = pin_no
         self.state = False
-        if config.LINE_WIDTH:
+        if config.ON_LINE:
             self.led = io_boards[self.board_no].get_pin(self.pin_no)
             self.led.switch_to_output(value=True)
         self.index = Flasher.count
@@ -811,7 +912,7 @@ class Flasher(Device):
     def set(self, value):
         """ Sets the LED on or off. """
         self.state = value
-        if config.LINE_WIDTH:
+        if config.ON_LINE:
             self.led.value = not value
         if self.widget:
             if self.state:
@@ -869,9 +970,9 @@ class Flasher(Device):
             pattern = ''
             for flag in self.pattern:
                 pattern += ('*' if flag else '.')
-            f.write(f'f p {self.board_no}.{self.pin_no}, {self.start}, {pattern}')
+            f.write(f'fp {self.board_no}.{self.pin_no}, {self.start}, {pattern}\n')
         else:
-            f.write(f'f {self.letter} {self.board_no}.{self.pin_no}, {self.start}, {self.on}, {self.off}')
+            f.write(f'f{self.letter} {self.board_no}.{self.pin_no}, {self.start}, {self.on}, {self.off}\n')
        
 
 
@@ -901,7 +1002,9 @@ def print_lcd(n, s):
 servos = []
 leds = []
 buttons = []
+relays = []
 flashers = []
+io_lists = [leds, buttons, relays, flashers]
 decorators = []
 
 trackplan = None
@@ -931,7 +1034,7 @@ def save():
     try:
         with open('servo.txt', 'w', encoding="utf-8") as f:
             # Save the boards
-            if config.LINE_WIDTH:
+            if config.ON_LINE:
                 for servo_board in servo_boards:
                     f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
                 for io_board in io_boards:
@@ -952,6 +1055,7 @@ def save():
 
             # Now save the servos and related data
             for lst in [servos, flashers, decorators]:
+                f.write('\n\n')
                 for el in lst:
                     el.write_to_file(f)
                
@@ -1047,6 +1151,8 @@ try:
                 Decorator.create(line)
             elif line[0:1] == 'b':
                 PButton.create(line, servo)
+            elif line[0:1] == 'r':
+                Relay.create(line, servo)
             elif line[0:1] == 'l':
                 Led.create(line, servo)
             elif line[0:1] == 'f':
@@ -1058,6 +1164,12 @@ except FileNotFoundError:
     print('Should be a text file in the same directory as this program.')
     print('Not much I can do with it, so giving up...')
     exit()
+except ServoConfigException as ex:
+    print(ex)
+    print('Failed to load data file.')
+    exit()
+
+
                
 # report how it went for diagostics
 print(f"INFO: Found {len(servo_boards)} servo board(s).")
@@ -1070,6 +1182,7 @@ print(f"INFO: Found {len(ups_boards)} UPS board(s).")
 print(f"INFO: Found {len(servos)} servo(s).")
 print(f"INFO: Found {len(buttons)} button(s).")
 print(f"INFO: Found {len(leds)} indicator LED(s).")
+print(f"INFO: Found {len(relays)} relay(s).")
 print(f"INFO: Found {len(flashers)} flashing LED(s).")
 if not config.SUPPRESS_WARNINGS:
     for servo in servos:
@@ -2037,14 +2150,15 @@ if config.ON_LINE:
     for servo in servos:
         print('INFOR: Setting servo ' + servo.id())
         try:
-            self.servo.angle = self.current_angle / 100
+            servo.servo.angle = servo.current_angle / 100
+            servo.off_relay.set(True)
         except OSError as err:
             print("ERROR: OSError {err}")
             print("This may be because there is no ground or power connection\nto the servo board on the I2C side")
             print("Terminating!")
             exit()
         time.sleep(0.1)
-        self.servo.angle = None
+        servo.servo.angle = None
 
 
 
