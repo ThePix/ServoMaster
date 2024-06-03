@@ -2,8 +2,6 @@
 ServoMaster
 Copyright 2024 Andy joel and Preston&District MRS
 
-Version 1.4
-
 See here:
 https://github.com/ThePix/ServoMaster/wiki
 
@@ -22,10 +20,12 @@ b - button
 f - flasher
 - - trackplan
 
-
-
-
 """
+
+
+VERSION = '1.4'
+
+
 
 
 #################################################################################
@@ -40,6 +40,11 @@ import traceback
 from threading import Thread
 
 import config
+
+config.DESC_WIDTH = 24                 # The description for servos can be this long
+config.ANGLE_ADJUST = 5                # Up/down buttons change the angle this much
+config.SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
+config.SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
 
 if config.ON_LINE:
     try:
@@ -181,8 +186,8 @@ class Servo(Device):
         self.off_buttons = []
         self.main_colour = None
         self.branch_colour = None
-        self.on_relay = None
-        self.off_relay = None
+        self.relay = None
+        self.relay_state = None
        
         if graphic:
             md = re.match(r'(r)?([ABY]) (\d+), (\d+)', graphic)
@@ -277,10 +282,8 @@ class Servo(Device):
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
         for led in self.off_leds:
             f.write(f'l off {led.board_no}.{led.pin_no}\n')
-        for relay in self.on_relays:
-            f.write(f'r on {relay.board_no}.{relay.pin_no}\n')
-        for relay in self.off_relays:
-            f.write(f'r off {relay.board_no}.{relay.pin_no}\n')
+        for relay in self.relays:
+            f.write(f'r {relay.board_no}.{relay.pin_no}\n')
         for b in self.on_buttons:
             f.write(f'b on {b.board_no}.{b.pin_no}\n')
         for b in self.off_buttons:
@@ -295,6 +298,15 @@ class Servo(Device):
         self.state_label = state_label
        
     def sanity_check(self):
+        if self.centre_angle < self.off_angle and self.centre_angle < self.on_angle:
+            print(f'WARNING: Centre position is less than both ON and OFF positions for servo {self.id()} ({self.desc}).')
+        if self.centre_angle > self.off_angle and self.centre_angle > self.on_angle:
+            print(f'WARNING: Centre position is greater than both ON and OFF positions for servo {self.id()} ({self.desc}).')
+        
+        
+        if config.SUPPRESS_WARNINGS:
+            return
+
         """ Check for matching numbers of buttons and LEDS. """
         if len(self.on_leds) == 0:
             print(f'WARNING: Not found any "on" LEDs for servo {self.id()} ({self.desc}).')
@@ -312,12 +324,11 @@ class Servo(Device):
         else:
             self.off_leds.append(led)
 
-    def set_relay(self, relay, turn_on):
+    def set_relay(self, relay):
         """ Add the given relay to the list of "on" or "off" relays. """
-        if turn_on:
-            self.on_relay = relay
-        else:
-            self.off_relay = relay
+        self.relay = relay
+        self.relay_state = False
+        self.relay.set(False)  # May need some thought - could short when first turned on
 
     def set_button(self, button, turn_on):
         """ Add the given button to the list of "on" or "off" buttons. """
@@ -385,25 +396,33 @@ class Servo(Device):
                 self.set_leds()
                 if config.ON_LINE:
                     self.servo.angle = None
-                if self.off_relay:
-                    if self.target_angle == self.off_angle:
-                        self.off_relay.set(True)
-                    if self.target_angle == self.on_angle:
-                        self.on_relay.set(True)
-
-
+                if self.relay:
+                    # Is relay ON and we are now between the centre and off position?
+                    if self.off_angle < self.centre_angle and self.current_angle < self.centre_angle and self.relay_state:
+                        self.relay_state = False
+                        self.relay.set(False)
+                    elif self.off_angle > self.centre_angle and self.current_angle > self.centre_angle and self.relay_state:
+                        self.relay_state = False
+                        self.relay.set(False)
+                
+                    # Is relay OFF and we are now between the centre and on position?
+                    if self.on_angle < self.centre_angle and self.current_angle < self.centre_angle and not self.relay_state:
+                        self.relay_state = True
+                        self.relay.set(True)
+                    elif self.n_angle > self.centre_angle and self.current_angle > self.centre_angle and not self.relay_state:
+                        self.relay_state = True
+                        self.relay.set(True)
+                
             return False
 
         if not self.moving:
             # Could do this in set, but prefer here as set can be done repeatedly
             self.moving = True
             self.reset_leds()
-            if config.ON_LINE and self.off_relay:
-                 self.off_relay.set(False)
-                 self.on_relay.set(False)
 
 
-        increment = elapsed * self.speed;
+        increment = elapsed * self.speed * abs(self.on_angle - self.off_angle) / 10000
+        print(increment)
         # diff is then capped at that
         if diff > 0:
             if diff > increment:
@@ -1184,9 +1203,8 @@ print(f"INFO: Found {len(buttons)} button(s).")
 print(f"INFO: Found {len(leds)} indicator LED(s).")
 print(f"INFO: Found {len(relays)} relay(s).")
 print(f"INFO: Found {len(flashers)} flashing LED(s).")
-if not config.SUPPRESS_WARNINGS:
-    for servo in servos:
-        servo.sanity_check()
+for servo in servos:
+    servo.sanity_check()
 
 
        
@@ -1680,20 +1698,20 @@ class ServoGridRow():
             return
 
         if self.servo.centred:
-            if self.servo.centre_angle > 17000 - config.ANGLE_ADJUST * 100:
-                print('BAD INPUT: Cannot go over 170')
+            if self.servo.centre_angle > 17500 - config.ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go over 175')
                 return
             self.servo.centre_angle += config.ANGLE_ADJUST * 100
            
         elif self.servo.turn_on:
-            if self.servo.on_angle > 17000 - config.ANGLE_ADJUST * 100:
-                print('BAD INPUT: Cannot go over 170')
+            if self.servo.on_angle > 17500 - config.ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go over 175')
                 return
             self.servo.on_angle += config.ANGLE_ADJUST * 100
            
         else:
-            if self.servo.off_angle > 17000 - config.ANGLE_ADJUST * 100:
-                print('BAD INPUT: Cannot go over 170')
+            if self.servo.off_angle > 17500 - config.ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go over 175')
                 return
             self.servo.off_angle += config.ANGLE_ADJUST * 100
 
@@ -1707,20 +1725,20 @@ class ServoGridRow():
             return
 
         if self.servo.centred:
-            if self.servo.centre_angle < 1000 + config.ANGLE_ADJUST * 100:
-                print('BAD INPUT: Cannot go under 10')
+            if self.servo.centre_angle < 500 + config.ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go under 5')
                 return
             self.servo.centre_angle -= config.ANGLE_ADJUST * 100
            
         elif self.servo.turn_on:
-            if self.servo.on_angle < 1000 + config.ANGLE_ADJUST * 100:
-                print('BAD INPUT: Cannot go under 10')
+            if self.servo.on_angle < 500 + config.ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go under 5')
                 return
             self.servo.on_angle -= config.ANGLE_ADJUST * 100
            
         else:
-            if self.servo.off_angle < 1000 + config.ANGLE_ADJUST * 100:
-                print('BAD INPUT: Cannot go under 10')
+            if self.servo.off_angle < 500 + config.ANGLE_ADJUST * 100:
+                print('BAD INPUT: Cannot go under 5')
                 return
             self.servo.off_angle -= config.ANGLE_ADJUST * 100
 
@@ -2030,9 +2048,9 @@ class ServoWindow(tk.Tk):
        
         tk.Tk.__init__(self, *args, **kwargs)  # Note: super() does not work here
         if config.ON_LINE:
-            self.title("ServoMaster: " + config.TITLE)
+            self.title(f"ServoMaster ({VERSION}): {config.TITLE}")
         else:
-            self.title("ServoMaster: "  + config.TITLE + " (off-line)")
+            self.title(f"ServoMaster ({VERSION}): {config.TITLE} (off-line)")
            
         self.protocol('WM_DELETE_WINDOW', self.confirm_quit)
 
@@ -2148,10 +2166,10 @@ Do it in sequence with slight delay so only drawing minimal power
 """
 if config.ON_LINE:
     for servo in servos:
-        print('INFOR: Setting servo ' + servo.id())
+        print('INFOR: Setting servo ' + servo.id() + ' to OFF')
         try:
             servo.servo.angle = servo.current_angle / 100
-            servo.off_relay.set(True)
+            servo.relay.set(True)
         except OSError as err:
             print("ERROR: OSError {err}")
             print("This may be because there is no ground or power connection\nto the servo board on the I2C side")
