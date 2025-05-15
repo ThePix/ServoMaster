@@ -23,7 +23,7 @@ f - flasher
 """
 
 
-VERSION = '1.4'
+VERSION = '1.5'
 
 
 
@@ -37,14 +37,11 @@ import sys
 import random
 import math
 import traceback
+import os
 from threading import Thread
 
 import config
 
-config.DESC_WIDTH = 24                 # The description for servos can be this long
-config.ANGLE_ADJUST = 5                # Up/down buttons change the angle this much
-config.SHUTDOWN_AT = 30                # Turn off RPi when battery drops below this
-config.SLEEP = 0.001                   # Sleep for this many seconds at the end of each loop
 
 if config.ON_LINE:
     try:
@@ -55,14 +52,17 @@ if config.ON_LINE:
         import I2C_LCD_driver
         from adafruit_character_lcd.character_lcd_i2c import Character_LCD_I2C
         from adafruit_servokit import ServoKit
-        import INA219
+        #import INA219
+        from adafruit_ina219 import ADCResolution, BusVoltageRange, INA219
     except ModuleNotFoundError as err:
+        print(traceback.format_exc())
         print(f"ERROR: ModuleNotFoundError {err}")
         print('This is likely because you have not activated the environment.\nTo do so, type "source pdmrs/bin/activate", then try again.')
+        print('Also check the I2C bus is turned on (click on the raspberry icon, top left, and  select Preferences - Raspberry Pi Configuration, then go to the "Interfaces" tab, and turn on I2C; will need a reboot)')
         exit()
         
         
-# Imorts for GUI
+# Imports for GUI
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import font, Menu, messagebox, PhotoImage, Toplevel, Scrollbar, TclError
@@ -70,14 +70,21 @@ from PIL import Image, ImageTk
 
 
 
-HEADLESS = len(sys.argv) > 1 and sys.argv[1] 
-
 def verify(n, min, max, msg):
     """
     Checks a value is in the right range. If not the message is printed and the program will quit.
     Used in constructors to ensure servos, etc. are on boards and pins that make sense,
     and angles are in suitable ranges.
     Note that n must be equal or greater than min, but less than max.
+    """
+    """
+    # Is this a better solution than below?!?
+    if n < min:
+        print(f'{msg} Found {n}, expected that to be {min} or over')
+        exit()
+    if n != 0 and n >= max:
+        print(f'{msg} Found {n}, expected that to be less than {max}')
+        exit()
     """
     if n >= max or n < min:
         print(f'ERROR: {msg} Found {n}, expected that to be {min} or over and less than {max}')
@@ -151,6 +158,11 @@ class Servo(Device):
             print('ERROR: Badly formatted line for servo: ' + s)
             return None
    
+    def quiet_all():
+        for servo in servos:
+            servo.quiet()
+            
+
     def __init__(self, board_no, pin_no, speed, off_angle, centre_angle, on_angle, graphic=None, desc=None):
         """
         Constructor. As well as setting the given values, also creates a servo object from the I2C
@@ -206,6 +218,9 @@ class Servo(Device):
 
         if config.ON_LINE:
             self.servo = servo_boards[self.board_no].servo[self.pin_no]
+            # Do we need these lines?!?
+            #print('..' + str(self.current_angle / 100))
+            #self.servo.angle = self.current_angle / 100
         self.turn_on = False
         self.index = Servo.count
         Servo.count += 1
@@ -282,8 +297,8 @@ class Servo(Device):
             f.write(f'l on {led.board_no}.{led.pin_no}\n')
         for led in self.off_leds:
             f.write(f'l off {led.board_no}.{led.pin_no}\n')
-        for relay in self.relays:
-            f.write(f'r {relay.board_no}.{relay.pin_no}\n')
+        if self.relay:
+            f.write(f'r {self.relay.board_no}.{self.relay.pin_no}\n')
         for b in self.on_buttons:
             f.write(f'b on {b.board_no}.{b.pin_no}\n')
         for b in self.off_buttons:
@@ -462,6 +477,9 @@ class Servo(Device):
         else:
             for led in self.off_leds:
                 led.set(True)
+
+    def quiet(self):
+        self.servo.angle = None
 
 
 """
@@ -807,6 +825,7 @@ class PButton(IOPin):
         except OSError:
             print('ERROR: Got an OSError, possibly because I am trying to read a board that does not exist or is faulty?')
             print(f'board={self.board} pin={self.pin}')
+            print(e)
 
     def check_state(self):
         """
@@ -1011,7 +1030,7 @@ if config.ON_LINE:
 io_boards = []
 servo_boards = []
 lcd_boards = []
-ups_boards = []
+ups_board = None
 def print_lcd(n, s):
     if config.ON_LINE:
         for i in range(len(lcd_boards)):
@@ -1060,7 +1079,7 @@ def save():
                     f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
                 for lcd_board in lcd_boards:
                     f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
-                for usp_board in ups_boards:
+                if usp_board:
                     f.write(f'UPS{hex(usp_board.addr)}\n')
             else:
                 for servo_board in servo_boards:
@@ -1069,7 +1088,7 @@ def save():
                     f.write(f'IO{hex(io_board.addr)}\n')
                 for lcd_board in lcd_boards:
                     f.write(f'LCD{hex(lcd_board.addr)}\n')
-                for usp_board in ups_boards:
+                if usp_board:
                     f.write(f'UPS{hex(usp_board.addr)}\n')
 
             # Now save the servos and related data
@@ -1100,7 +1119,7 @@ class fake_board:
     def __init__(self, addr):
         self.addr = addr
 
-class fake_usp_board:
+class fake_ups_board:
     def __init__(self, addr):
         self.addr = addr
     def getBusVoltage_V(self):
@@ -1116,6 +1135,7 @@ def load_device(line):
    
     This is in a function of its own so we can readily exit it it a problem is encountered.
     """
+    
     md = re.match('([A-Z]+)(?:0x|)([0-9a-f]+)', line)
     if not md:
         print('ERROR: Badly formatted line: ' + line)
@@ -1134,9 +1154,14 @@ def load_device(line):
             case 'IO':
                 io_boards.append(adafruit_pcf8575.PCF8575(i2c, address))
             case 'LCD':
-                lcd_boards.append(I2C_LCD_driver.lcd())
+                print(f'LCD')
+                x = I2C_LCD_driver.lcd()
+                print(f'LCD')
+                lcd_boards.append(x)
+                print(f'LCD')
             case 'UPS':
-                ups_boards.append(INA219(addr=address))
+                global ups_board
+                ups_board = INA219(i2c, addr=address)
             case _:
                 print('ERROR: Device code not recognised: ' + line)
     else:
@@ -1148,15 +1173,20 @@ def load_device(line):
             case 'LCD':
                 lcd_boards.append(fake_board(address))
             case 'UPS':
-                ups_boards.append(fake_usp_board(address))
+                ups_board = fake_ups_board(address)
             case _:
                 print('ERROR: Device code not recognised: ' + line)
+    print(f'Done')
+
+
+
 
 try:
     """
     File access can be problematic, so wrap in a try/except block
     """
-    with open('servo.txt', encoding="utf-8") as f:
+    with open('/home/f2andy/pdmrs/servo.txt', encoding="utf-8") as f:
+        print('opened')
         servo = None
         comments = []
         for line in f:
@@ -1178,7 +1208,8 @@ try:
                 Flasher.create(line)
             else:
                 load_device(line)
-except FileNotFoundError:
+except FileNotFoundError as ex:
+    print(ex)
     print('ERROR: Failed to open the configuration file, servo.txt.')
     print('Should be a text file in the same directory as this program.')
     print('Not much I can do with it, so giving up...')
@@ -1196,7 +1227,9 @@ print(f"INFO: Found {len(io_boards)} I/O board(s).")
 
 print(f"INFO: Found {len(lcd_boards)} LCD board(s); sending welcome message.")
 print_lcd(1, "Hello P&D MRS!")
-print(f"INFO: Found {len(ups_boards)} UPS board(s).")
+
+print(f'Here {type(ups_board)}')
+print(f"INFO: Found {'one' if ups_board else 'no'} UPS board.")
 
 print(f"INFO: Found {len(servos)} servo(s).")
 print(f"INFO: Found {len(buttons)} button(s).")
@@ -1206,6 +1239,7 @@ print(f"INFO: Found {len(flashers)} flashing LED(s).")
 for servo in servos:
     servo.sanity_check()
 
+print(f"INFO: Passed sanity check.")
 
        
 
@@ -1223,43 +1257,6 @@ patterns = [
     re.compile("^l(\\d+) off$", re.IGNORECASE),
 ]
 
-"""
-Gets input from the command line, sets the request object for mail loop to deal with.
-"""
-
-def input_loop():
-    print("INFO: Ready for input at the command line")
-    while not request['action'] == 'terminate':
-        s = input()
-        print("Got: " + s)
-        mds = []
-        for pattern in patterns:
-            mds.append(pattern.match(s))
-        if mds[0]:
-            request['action'] = 'terminate'
-        elif mds[1]:
-            request['action'] = 'angle'
-            request['servo'] = int(mds[1].group(1))
-            request['angle'] = int(mds[1].group(2))
-        elif mds[2]:
-            print('servo on')
-            request['action'] = 'on'
-            request['servo'] = int(mds[2].group(1))
-        elif mds[3]:
-            print('servo off')
-            request['action'] = 'off'
-            request['servo'] = int(mds[3].group(1))
-        elif mds[4]:
-            print('LED on')
-            request['action'] = 'LED on'
-            request['servo'] = int(mds[4].group(1))
-        elif mds[5]:
-            print('LED off')
-            request['action'] = 'LED off'
-            request['servo'] = int(mds[5].group(1))
-        else:
-            print("Input commands in the form x y")
-   
 
 
 
@@ -1304,23 +1301,28 @@ def main_loop():
         # Get values from device
         # If below config.SHUTDOWN_AT% and draining, shutdown
         # Otherwise report to GUI
-        if loop_count % 100 == 0 and len(ups_boards) > 0:
-            bus_voltage = ups_boards[0].getBusVoltage_V()             # voltage on V- (load side)
-            # shunt_voltage = ups_boards[0].getShuntVoltage_mV() / 1000 # voltage between V+ and V- across the shunt
-            current = ups_boards[0].getCurrent_mA()                   # current in mA
-            # power = ups_boards[0].getPower_W()                        # power in W
-            percent_remaining = (bus_voltage - 6)/2.4*100
-            if percent_remaining < config.SHUTDOWN_AT and current < 0:
-                print("Battery supply about to expire - shutting down.")
-                os.system("sudo shutdown -h now")
+        # https://github.com/adafruit/Adafruit_CircuitPython_INA219/blob/main/examples/ina219_simpletest.py
+        if loop_count % 100 == 0 and ups_board:
+            bus_voltage = ups_board.bus_voltage            # voltage on V- (load side)
+            current = ups_board.current                    # current in mA
             if window and window.power_label:
+                #print(f"v(bus)={'%.2f' % bus_voltage}, I={'%.2f' % current}")
                 try:
-                    if current < 0:
-                        window.power_label.config(text=f'On batteries, {round(percent_remaining, 2)}% remaining')
+                    if current < config.ON_BATTERY:
+                        window.power_label.config(text=f'On batteries, at {round(bus_voltage, 2)} V')
+                        #print('draining')
+                        if bus_voltage < config.SHUTDOWN_VOLTAGE:
+                            print("Battery supply about to expire - shutting down.")
+                            os.system(f". {config.SHUTDOWN_FILE}")
+                    elif current > config.CHARGING:
+                        window.power_label.config(text=f'Battery charging, at {round(bus_voltage, 2)} V')
+                        #print('charging')
                     else:
-                        window.power_label.config(text=f'Good; batteries at {round(percent_remaining, 2)}%.')
+                        window.power_label.config(text=f'Power normal, at {round(bus_voltage, 2)} V')
+                        #print('normal')
                 except tk.TclError:
                     print('*')
+            # also want to do LCD
 
 
         # HANDLE INPUTS
@@ -1407,7 +1409,7 @@ main_thread = Thread(target = main_loop)
 main_thread.daemon = True
 main_thread.start()
 
-
+print("INFO: Main loop thread started.")
 
 
 
@@ -2095,6 +2097,7 @@ class ServoWindow(tk.Tk):
         servos_menu.add_command(label="Next " + str(config.INCREMENT), command=ServoGridRow.offset_plus_10, font=menu_font)
         servos_menu.add_command(label="Previous " + str(config.INCREMENT), command=ServoGridRow.offset_minus_10, font=menu_font)
         servos_menu.add_command(label="Track plan...", command=TrackPlan.show, font=menu_font)
+        servos_menu.add_command(label="Quiet", command=Servo.quiet_all, font=menu_font)
         menubar.add_cascade(label="Servos", menu=servos_menu, font=menu_font)
 
         leds_menu = Menu(menubar, tearoff=0)
@@ -2166,10 +2169,11 @@ Do it in sequence with slight delay so only drawing minimal power
 """
 if config.ON_LINE:
     for servo in servos:
-        print('INFOR: Setting servo ' + servo.id() + ' to OFF')
+        print('INFO: Setting servo ' + servo.id() + ' to OFF')
         try:
             servo.servo.angle = servo.current_angle / 100
-            servo.relay.set(True)
+            if servo.relay:
+                servo.relay.set(True)
         except OSError as err:
             print("ERROR: OSError {err}")
             print("This may be because there is no ground or power connection\nto the servo board on the I2C side")
@@ -2179,14 +2183,13 @@ if config.ON_LINE:
         servo.servo.angle = None
 
 
+print("INFO: About to open GUI")
 
-
-if HEADLESS:
-    input_loop()
-
-else:
-    window = ServoWindow()
-    if config.SHOW_TRACKPLAN:
-        TrackPlan.show()
-        window.geometry("+%d+%d" %(10, config.HEIGHT + 150))
-    window.mainloop()
+window = ServoWindow()
+print("INFO: GUI 1")
+if config.SHOW_TRACKPLAN:
+    TrackPlan.show()
+    window.geometry("+%d+%d" %(10, config.HEIGHT + 150))
+print("INFO: GUI 2")
+window.mainloop()
+print("INFO: GUI running")
