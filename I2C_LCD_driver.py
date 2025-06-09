@@ -16,11 +16,12 @@ Made available under GNU GENERAL PUBLIC LICENSE
 """
 
 # i2c bus (0 -- original Pi, 1 -- Rev 2 Pi)
-I2CBUS = 0
+I2CBUS = 1
 
 # LCD Address
-ADDRESS = 0x20
+ADDRESS = 0x27
 
+import traceback
 import smbus
 from time import sleep
 
@@ -106,9 +107,16 @@ Rs = 0b00000001 # Register select bit
 class lcd:
    #initializes objects and lcd
    def __init__(self):
-      self.lcd_device = i2c_device(ADDRESS)
+      print(f'in LCD')
+      try:
+          self.lcd_device = i2c_device(ADDRESS)
+      except Exception as e:
+          print(traceback.format_exc())
+          print(e)
+      print(f'in LCD1')
 
       self.lcd_write(0x03)
+      print(f'in LCD2')
       self.lcd_write(0x03)
       self.lcd_write(0x03)
       self.lcd_write(0x02)
@@ -117,7 +125,9 @@ class lcd:
       self.lcd_write(LCD_DISPLAYCONTROL | LCD_DISPLAYON)
       self.lcd_write(LCD_CLEARDISPLAY)
       self.lcd_write(LCD_ENTRYMODESET | LCD_ENTRYLEFT)
+      print(f'in LCD3')
       sleep(0.2)
+      print(f'in LCD4')
 
 
    # clocks EN to latch command

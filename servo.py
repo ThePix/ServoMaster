@@ -363,6 +363,7 @@ class Servo(Device):
         if config.REPORT_SERVO_SWITCHING:
             state = 'ON' if _turn_on else 'OFF'
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
+            print_lcd(2, f"Set {self.board_no}.{self.pin_no} to {state}")
        
     def centre(self):
         """"
@@ -373,6 +374,7 @@ class Servo(Device):
         self.centred = True
         if config.REPORT_SERVO_SWITCHING:
             print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to centred')
+            print_lcd(2, f"Set {self.board_no}.{self.pin_no} to cen")
        
     def set_angle(self, angle):
         """"
@@ -437,7 +439,7 @@ class Servo(Device):
 
 
         increment = elapsed * self.speed * abs(self.on_angle - self.off_angle) / 10000
-        print(increment)
+        # print(increment)
         # diff is then capped at that
         if diff > 0:
             if diff > increment:
@@ -1029,12 +1031,15 @@ if config.ON_LINE:
     i2c = board.I2C()  # uses board.SCL and board.SDA
 io_boards = []
 servo_boards = []
-lcd_boards = []
+lcd_board = None
 ups_board = None
+
 def print_lcd(n, s):
-    if config.ON_LINE:
-        for i in range(len(lcd_boards)):
-            lcd_boards[i].lcd_display_string(s, n)
+    #print(f'LCD{n}: {s}')
+    #print(type(lcd_board))
+    #print(lcd_board)
+    if config.ON_LINE and lcd_board:
+        lcd_board.lcd_display_string(s, n)
 
 
 servos = []
@@ -1077,7 +1082,7 @@ def save():
                     f.write(f'S{hex(servo_board._pca.i2c_device.device_address)}\n')
                 for io_board in io_boards:
                     f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
-                for lcd_board in lcd_boards:
+                if lcd_board:
                     f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
                 if usp_board:
                     f.write(f'UPS{hex(usp_board.addr)}\n')
@@ -1086,7 +1091,7 @@ def save():
                     f.write(f'S{hex(servo_board.addr)}\n')
                 for io_board in io_boards:
                     f.write(f'IO{hex(io_board.addr)}\n')
-                for lcd_board in lcd_boards:
+                if lcd_board:
                     f.write(f'LCD{hex(lcd_board.addr)}\n')
                 if usp_board:
                     f.write(f'UPS{hex(usp_board.addr)}\n')
@@ -1142,7 +1147,8 @@ def load_device(line):
         return
    
     address = int(md.group(2), 16)
-    if config.ON_LINE and not address in i2c_devices:
+    # If a device not found - other than LCD or UPS - give up
+    if config.ON_LINE and not address in i2c_devices and not md.group(1) in ['LCD', 'UPS']:
         print('ERROR: Device not found: ' + line)
         print('This is not going well; I am giving up!\nYou need to ensure the I2C boards are connected\nand correctly configured in "servo.txt".\nGood luck...')
         exit()
@@ -1154,11 +1160,8 @@ def load_device(line):
             case 'IO':
                 io_boards.append(adafruit_pcf8575.PCF8575(i2c, address))
             case 'LCD':
-                print(f'LCD')
-                x = I2C_LCD_driver.lcd()
-                print(f'LCD')
-                lcd_boards.append(x)
-                print(f'LCD')
+                global lcd_board
+                lcd_board = I2C_LCD_driver.lcd()
             case 'UPS':
                 global ups_board
                 ups_board = INA219(i2c, addr=address)
@@ -1171,7 +1174,7 @@ def load_device(line):
             case 'IO':
                 io_boards.append(fake_board(address))
             case 'LCD':
-                lcd_boards.append(fake_board(address))
+                lcd_board = fake_board(address)
             case 'UPS':
                 ups_board = fake_ups_board(address)
             case _:
@@ -1225,10 +1228,9 @@ except ServoConfigException as ex:
 print(f"INFO: Found {len(servo_boards)} servo board(s).")
 print(f"INFO: Found {len(io_boards)} I/O board(s).")
 
-print(f"INFO: Found {len(lcd_boards)} LCD board(s); sending welcome message.")
+print(f"INFO: Found {'one' if lcd_board else 'no'} LCD board; sending welcome message.")
 print_lcd(1, "Hello P&D MRS!")
 
-print(f'Here {type(ups_board)}')
 print(f"INFO: Found {'one' if ups_board else 'no'} UPS board.")
 
 print(f"INFO: Found {len(servos)} servo(s).")
@@ -2169,7 +2171,7 @@ Do it in sequence with slight delay so only drawing minimal power
 """
 if config.ON_LINE:
     for servo in servos:
-        print('INFO: Setting servo ' + servo.id() + ' to OFF')
+        # print('INFO: Setting servo ' + servo.id() + ' to OFF')
         try:
             servo.servo.angle = servo.current_angle / 100
             if servo.relay:

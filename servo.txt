@@ -1,9 +1,8 @@
 S0x41
 S0x44
 S0x43
-IO0x20
 UPS0x42
-LCD0x20
+LCD0x27
 
 
 s 0.0, 1000, 170, 150, 100, [Y 10, 8] L FY-R Middle
@@ -21,30 +20,14 @@ s 0.5, 1000, 40, 90, 140, [rA 13, 10] L FY-R Anti 2
 s 0.6, 1000, 165, 140, 85, [rB 13, 6] L FY-R Clck 2
 
 s 0.7, 1000, 145, 120, 60, [rA 11, 24] U FY-R Anti
-b off 0.8
-b on 0.11
-l off 0.6
-l on 0.5
 
 s 2.15, 1000, 55, 90, 110, [A 4, 24] U FY-L Anti
-b on 0.8
-b off 0.11
-l on 0.6
-l off 0.5
 
 
 
 s 0.8, 1000, 50, 80, 130, [rB 11, 22] U FY-R Clck
-b off 0.10
-b on 0.9
-l off 0.7
-l on 0.4
 
 s 2.14, 1000, 120, 90, 70, [B 4, 22] U FY-L Clck
-b off 0.10
-b on 0.9
-l off 0.7
-l on 0.4
 
 
 
