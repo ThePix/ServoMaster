@@ -1084,8 +1084,8 @@ def save():
                     f.write(f'IO{hex(io_board.i2c_device.device_address)}\n')
                 if lcd_board:
                     f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
-                if usp_board:
-                    f.write(f'UPS{hex(usp_board.addr)}\n')
+                if ups_board:
+                    f.write(f'UPS{hex(ups_board.addr)}\n')
             else:
                 for servo_board in servo_boards:
                     f.write(f'S{hex(servo_board.addr)}\n')
@@ -1127,6 +1127,8 @@ class fake_board:
 class fake_ups_board:
     def __init__(self, addr):
         self.addr = addr
+        self.bus_voltage = 7.0
+        self.current = 
     def getBusVoltage_V(self):
         return 7.368
     def getCurrent_mA(self):
