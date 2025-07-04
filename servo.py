@@ -66,7 +66,7 @@ if config.ON_LINE:
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import font, Menu, messagebox, PhotoImage, Toplevel, Scrollbar, TclError
-from PIL import Image, ImageTk
+
 
 
 
@@ -1136,10 +1136,6 @@ class fake_ups_board:
         self.addr = addr
         self.bus_voltage = 7.0
         self.current = 0.3
-    def getBusVoltage_V(self):
-        return 7.368
-    def getCurrent_mA(self):
-        return -327.7
 
 def load_device(line):
     """
@@ -1485,15 +1481,6 @@ class TrackPlan(tk.Toplevel):
         super().__init__(window, width=config.WIDTH, height=config.HEIGHT + 24)
         self.title('TrackPlan: ' + config.TITLE)
        
-        try:
-            self.img = Image.open("servo_icon.png")
-            self.img = ImageTk.PhotoImage(self.img)
-        except FileNotFoundError:
-            self.img = None
-            print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
-
-        if self.img:
-            ttk.Label(self, image=self.img).place(x=0, y=0)
         if config.LEFT_CLICK_ONLY:
             label = tk.Label(self, text='Left click a point to change it (no effect while moving)').place(x=40,y=0)
         else:
@@ -2076,15 +2063,9 @@ class ServoWindow(tk.Tk):
 
         self.create_menubar()
        
-        try:
-            self.img = Image.open("servo_icon.png")
-            self.img = ImageTk.PhotoImage(self.img)
-        except FileNotFoundError:
-            self.img = None
-            print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
+        ServoGridRow.headers(None, self.heading_font)
 
         # The widgets that do the work
-        ServoGridRow.headers(self.img, self.heading_font)
         for i in range(config.NUMBER_OF_ROWS):
             servo_grid_rows.append(ServoGridRow(i, self.label_font))
 

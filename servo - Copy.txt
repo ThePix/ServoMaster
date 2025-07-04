@@ -3,12 +3,6 @@ S0x44
 S0x43
 UPS0x42
 LCD0x27
-IO0x20
-
-b on 0.1
-b off 0.2
-l on 0.12
-l off 0.13
 
 
 s 0.0, 1000, 170, 150, 100, [Y 10, 8] L FY-R Middle
