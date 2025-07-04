@@ -646,7 +646,8 @@ class IOPin(Device):
         """ Gets a string list, separated by slashes, of servos in the given list. """
         lst2 = []
         for servo in lst:
-            lst2.append(servo.id())
+            if servo:
+                lst2.append(servo.id())
         return '/'.join(lst2)
 
     def find_in_list(lst, board_no, pin_no):
@@ -719,7 +720,8 @@ class Led(IOPin):
         Uses IOPin.create to do most of the work
         """
         led, turn_on = IOPin.create(Led, leds, 'l', s, servos)
-        servo.set_led(led, turn_on)
+        if servo:
+            servo.set_led(led, turn_on)
 
 
     def __init__(self, board_no, pin_no):
@@ -739,6 +741,7 @@ class Led(IOPin):
         """ Sets the LED on or off. """
         if config.ON_LINE:
             self.led.value = not value
+            print(f'Set {self.id()} to {self.led.value}')
 
 
 class Relay(IOPin):
@@ -757,7 +760,8 @@ class Relay(IOPin):
         Uses IOPin.create to do most of the work
         """
         relay, turn_on = IOPin.create(Relay, relays, 'r', s, servos)
-        servo.set_relay(relay, turn_on)
+        if servo:
+            servo.set_relay(relay, turn_on)
 
 
     def __init__(self, board_no, pin_no):
@@ -797,7 +801,8 @@ class PButton(IOPin):
         Uses IOPin.create to do most of the work
         """
         button, turn_on = IOPin.create(PButton, buttons, 'b', s, servos)
-        servo.set_button(button, turn_on)
+        if servo:
+            servo.set_button(button, turn_on)
 
     def __init__(self, board_no, pin_no):
         """
@@ -835,9 +840,11 @@ class PButton(IOPin):
         """
         if self.get():
             for servo in self.on_servos:
-                servo.set(True)
+                if servo:
+                    servo.set(True)
             for servo in self.off_servos:
-                servo.set(False)
+                if servo:
+                    servo.set(False)
        
         # This seems not to work reliably because widget can get set to None after is is checked
         # The exception handling deals with it... by ignoring it
@@ -1128,7 +1135,7 @@ class fake_ups_board:
     def __init__(self, addr):
         self.addr = addr
         self.bus_voltage = 7.0
-        self.current = 
+        self.current = 0.3
     def getBusVoltage_V(self):
         return 7.368
     def getCurrent_mA(self):
@@ -1190,7 +1197,7 @@ try:
     """
     File access can be problematic, so wrap in a try/except block
     """
-    with open('/home/f2andy/pdmrs/servo.txt', encoding="utf-8") as f:
+    with open('servo.txt', encoding="utf-8") as f:
         print('opened')
         servo = None
         comments = []
@@ -1357,6 +1364,7 @@ def main_loop():
             request['action'] = False
 
         if request['action'] == 'LED on':
+            print('ON response')
             if request['servo'] >= len(leds):
                 print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
@@ -1366,6 +1374,7 @@ def main_loop():
                     print(f'INFO: LED on {ident}')
             request['action'] = False
         if request['action'] == 'LED off':
+            print('OFF response')
             if request['servo'] >= len(leds):
                 print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
@@ -1844,7 +1853,7 @@ class LedGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one LED,
     and buttons and labels on the row will change and reflect its state, but
-    which LED that is can _vary depending on what offset is.
+    which LED that is can vary depending on what offset is.
     """
 
     offset = 0
@@ -1854,17 +1863,17 @@ class LedGridRow():
         """ Responds to a menu click to show the window for LEDs"""
 
         newWindow = Toplevel(window)
-        newWindow.title('LEDs: ' +  + config.TITLE)
+        newWindow.title('LEDs: ' + config.TITLE)
         LedGridRow.headers(newWindow)
         for i in range(config.NUMBER_OF_ROWS):
             led_grid_rows.append(LedGridRow(newWindow, i))
            
     def all_leds_on():
-        """ Responds to a menu click to tirn on all LEDs"""
+        """ Responds to a menu click to turn on all LEDs"""
         request['action'] = 'all LED on'
 
     def all_leds_off():
-        """ Responds to a menu click to tirn off all LEDs"""
+        """ Responds to a menu click to turn off all LEDs"""
         request['action'] = 'all LED off'
 
 
@@ -1940,10 +1949,12 @@ class LedGridRow():
             self.lbl_on_list.config(text='---')
 
     def led_on_button(self, event):
+        print('ON request')
         request['action'] = 'LED on'
         request['servo'] = self.led.index
 
     def led_off_button(self, event):
+        print('OFF request')
         request['action'] = 'LED off'
         request['servo'] = self.led.index
 
