@@ -23,7 +23,7 @@ f - flasher
 """
 
 
-VERSION = '1.5'
+VERSION = '1.6'
 
 
 
@@ -196,6 +196,7 @@ class Servo(Device):
         self.off_leds = []
         self.on_buttons = []
         self.off_buttons = []
+        self.togles = []
         self.main_colour = None
         self.branch_colour = None
         self.relay = None
@@ -303,6 +304,8 @@ class Servo(Device):
             f.write(f'b on {b.board_no}.{b.pin_no}\n')
         for b in self.off_buttons:
             f.write(f'b off {b.board_no}.{b.pin_no}\n')
+        for t in self.toggles:
+            f.write(f't {"on" if b.invert else "off"} {b.board_no}.{b.pin_no}\n')
        
     def set_widget(self, angle_label, state_label):
         """
@@ -351,6 +354,10 @@ class Servo(Device):
             self.on_buttons.append(button)
         else:
             self.off_buttons.append(button)
+
+    def set_toggle(self, toggle):
+        """ Add the given toggle to the list. """
+        self.toggles.append(toggle)
 
     def set(self, _turn_on):
         """"
@@ -861,6 +868,59 @@ class PButton(IOPin):
 
 
 
+
+#################################################################################
+
+class Toggle(PButton):
+    def create(s, servos):
+        """
+        Adds a toggle switch object, given a string.
+        The string should consist of a "t" to identify it
+        followed by (all separated with spaces):
+           on/off
+           the address - the board number, a dot and the pin number
+        Uses IOPin.create to do most of the work
+        """
+        toggle, turn_on = IOPin.create(Toggle, buttons, 't', s, servos)
+        toggle.state = turn_on
+        if servo:
+            servo.set_toggle(toggle)
+
+    def __init__(self, board_no, pin_no):
+        """
+        Constructor. Uses the super contructor, but also connects to the I/O board.
+        """
+        super().__init__(board_no, pin_no)
+        self.state = None
+
+    def check_state(self):
+        """
+        Call this every loop to have the toggle check its state and act appropriately.        
+        """
+        if self.state != self.get():
+            self.state = not self.state
+            print(self.state)
+            for servo in self.on_servos:
+                if servo:
+                    servo.set(self.state)
+            for servo in self.off_servos:
+                if servo:
+                    servo.set(self.state)
+       
+        # This seems not to work reliably because widget can get set to None after is is checked
+        # The exception handling deals with it... by ignoring it
+        if not self.widget:
+            return
+        try:
+            if self.get():
+                self.widget.config(text='ON!', foreground='white', background='black')
+            else:
+                self.widget.config(text='off', background='', foreground='black')
+        except (AttributeError, tk.TclError):
+            # seems to happen when closing the button window
+            print('*')
+
+
 #################################################################################
 
 class Flasher(Device):
@@ -1100,8 +1160,8 @@ def save():
                     f.write(f'IO{hex(io_board.addr)}\n')
                 if lcd_board:
                     f.write(f'LCD{hex(lcd_board.addr)}\n')
-                if usp_board:
-                    f.write(f'UPS{hex(usp_board.addr)}\n')
+                if ups_board:
+                    f.write(f'UPS{hex(ups_board.addr)}\n')
 
             # Now save the servos and related data
             for lst in [servos, flashers, decorators]:
@@ -1208,6 +1268,8 @@ try:
                 Decorator.create(line)
             elif line[0:1] == 'b':
                 PButton.create(line, servo)
+            elif line[0:1] == 't':
+                Toggle.create(line, servo)
             elif line[0:1] == 'r':
                 Relay.create(line, servo)
             elif line[0:1] == 'l':
@@ -1239,7 +1301,7 @@ print_lcd(1, "Hello P&D MRS!")
 print(f"INFO: Found {'one' if ups_board else 'no'} UPS board.")
 
 print(f"INFO: Found {len(servos)} servo(s).")
-print(f"INFO: Found {len(buttons)} button(s).")
+print(f"INFO: Found {len(buttons)} button(s) and toggle(s).")
 print(f"INFO: Found {len(leds)} indicator LED(s).")
 print(f"INFO: Found {len(relays)} relay(s).")
 print(f"INFO: Found {len(flashers)} flashing LED(s).")

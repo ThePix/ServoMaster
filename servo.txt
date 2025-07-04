@@ -9,6 +9,8 @@ b on 0.1
 b off 0.2
 l on 0.12
 l off 0.13
+t on 0.3
+t off 0.4
 
 
 s 0.0, 1000, 170, 150, 100, [Y 10, 8] L FY-R Middle
