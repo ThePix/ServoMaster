@@ -23,7 +23,7 @@ f - flasher
 """
 
 
-VERSION = '1.6'
+VERSION = '1.5'
 
 
 
@@ -66,7 +66,7 @@ if config.ON_LINE:
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import font, Menu, messagebox, PhotoImage, Toplevel, Scrollbar, TclError
-
+from PIL import Image, ImageTk
 
 
 
@@ -196,7 +196,6 @@ class Servo(Device):
         self.off_leds = []
         self.on_buttons = []
         self.off_buttons = []
-        self.togles = []
         self.main_colour = None
         self.branch_colour = None
         self.relay = None
@@ -304,8 +303,6 @@ class Servo(Device):
             f.write(f'b on {b.board_no}.{b.pin_no}\n')
         for b in self.off_buttons:
             f.write(f'b off {b.board_no}.{b.pin_no}\n')
-        for t in self.toggles:
-            f.write(f't {"on" if b.invert else "off"} {b.board_no}.{b.pin_no}\n')
        
     def set_widget(self, angle_label, state_label):
         """
@@ -355,11 +352,8 @@ class Servo(Device):
         else:
             self.off_buttons.append(button)
 
-    def set_toggle(self, toggle):
-        """ Add the given toggle to the list. """
-        self.toggles.append(toggle)
-
     def set(self, _turn_on):
+        print(f'In set: {_turn_on} {self.id()}')
         """"
         Set the target angle to the on or off angle, which will cause the servo
         to move to that angle over a few seconds.
@@ -369,7 +363,7 @@ class Servo(Device):
         self.centred = False
         if config.REPORT_SERVO_SWITCHING:
             state = 'ON' if _turn_on else 'OFF'
-            print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
+            #print(f'INFO: Setting servo {self.board_no}.{self.pin_no} ({self.desc}) to {state}')
             print_lcd(2, f"Set {self.board_no}.{self.pin_no} to {state}")
        
     def centre(self):
@@ -465,6 +459,12 @@ class Servo(Device):
                 print("This may be because there is no ground connection\nto the servo board on the I2C side")
                 print("Terminating!")
                 exit()
+            except ValueError as err:
+                print("ERROR: ValueError {err}")
+                print(f"Trying to set angle to {self.current_angle / 100}")
+                print(f"Target is {self.target_angle / 100}")
+                print(f"diff is {diff / 100}")
+                print("I will keep going but this needs resolving!")
                  
        
         if self.widget:
@@ -653,8 +653,7 @@ class IOPin(Device):
         """ Gets a string list, separated by slashes, of servos in the given list. """
         lst2 = []
         for servo in lst:
-            if servo:
-                lst2.append(servo.id())
+            lst2.append(servo.id())
         return '/'.join(lst2)
 
     def find_in_list(lst, board_no, pin_no):
@@ -727,8 +726,7 @@ class Led(IOPin):
         Uses IOPin.create to do most of the work
         """
         led, turn_on = IOPin.create(Led, leds, 'l', s, servos)
-        if servo:
-            servo.set_led(led, turn_on)
+        servo.set_led(led, turn_on)
 
 
     def __init__(self, board_no, pin_no):
@@ -748,7 +746,6 @@ class Led(IOPin):
         """ Sets the LED on or off. """
         if config.ON_LINE:
             self.led.value = not value
-            print(f'Set {self.id()} to {self.led.value}')
 
 
 class Relay(IOPin):
@@ -767,8 +764,7 @@ class Relay(IOPin):
         Uses IOPin.create to do most of the work
         """
         relay, turn_on = IOPin.create(Relay, relays, 'r', s, servos)
-        if servo:
-            servo.set_relay(relay, turn_on)
+        servo.set_relay(relay, turn_on)
 
 
     def __init__(self, board_no, pin_no):
@@ -808,8 +804,7 @@ class PButton(IOPin):
         Uses IOPin.create to do most of the work
         """
         button, turn_on = IOPin.create(PButton, buttons, 'b', s, servos)
-        if servo:
-            servo.set_button(button, turn_on)
+        servo.set_button(button, turn_on)
 
     def __init__(self, board_no, pin_no):
         """
@@ -847,11 +842,9 @@ class PButton(IOPin):
         """
         if self.get():
             for servo in self.on_servos:
-                if servo:
-                    servo.set(True)
+                servo.set(True)
             for servo in self.off_servos:
-                if servo:
-                    servo.set(False)
+                servo.set(False)
        
         # This seems not to work reliably because widget can get set to None after is is checked
         # The exception handling deals with it... by ignoring it
@@ -866,59 +859,6 @@ class PButton(IOPin):
             # seems to happen when closing the button window
             print('*')
 
-
-
-
-#################################################################################
-
-class Toggle(PButton):
-    def create(s, servos):
-        """
-        Adds a toggle switch object, given a string.
-        The string should consist of a "t" to identify it
-        followed by (all separated with spaces):
-           on/off
-           the address - the board number, a dot and the pin number
-        Uses IOPin.create to do most of the work
-        """
-        toggle, turn_on = IOPin.create(Toggle, buttons, 't', s, servos)
-        toggle.state = turn_on
-        if servo:
-            servo.set_toggle(toggle)
-
-    def __init__(self, board_no, pin_no):
-        """
-        Constructor. Uses the super contructor, but also connects to the I/O board.
-        """
-        super().__init__(board_no, pin_no)
-        self.state = None
-
-    def check_state(self):
-        """
-        Call this every loop to have the toggle check its state and act appropriately.        
-        """
-        if self.state != self.get():
-            self.state = not self.state
-            print(self.state)
-            for servo in self.on_servos:
-                if servo:
-                    servo.set(self.state)
-            for servo in self.off_servos:
-                if servo:
-                    servo.set(self.state)
-       
-        # This seems not to work reliably because widget can get set to None after is is checked
-        # The exception handling deals with it... by ignoring it
-        if not self.widget:
-            return
-        try:
-            if self.get():
-                self.widget.config(text='ON!', foreground='white', background='black')
-            else:
-                self.widget.config(text='off', background='', foreground='black')
-        except (AttributeError, tk.TclError):
-            # seems to happen when closing the button window
-            print('*')
 
 
 #################################################################################
@@ -1152,7 +1092,8 @@ def save():
                 if lcd_board:
                     f.write(f'LCD{hex(lcd_board.lcd_device.addr)}\n')
                 if ups_board:
-                    f.write(f'UPS{hex(ups_board.addr)}\n')
+                    #f.write(f'UPS{hex(ups_board.addr)}\n')
+                    f.write(f'UPS0x42\n')
             else:
                 for servo_board in servo_boards:
                     f.write(f'S{hex(servo_board.addr)}\n')
@@ -1161,7 +1102,8 @@ def save():
                 if lcd_board:
                     f.write(f'LCD{hex(lcd_board.addr)}\n')
                 if ups_board:
-                    f.write(f'UPS{hex(ups_board.addr)}\n')
+                    #f.write(f'UPS{hex(ups_board.addr)}\n')
+                    f.write(f'UPS0x42\n')
 
             # Now save the servos and related data
             for lst in [servos, flashers, decorators]:
@@ -1194,8 +1136,10 @@ class fake_board:
 class fake_ups_board:
     def __init__(self, addr):
         self.addr = addr
-        self.bus_voltage = 7.0
-        self.current = 0.3
+    def getBusVoltage_V(self):
+        return 7.368
+    def getCurrent_mA(self):
+        return -327.7
 
 def load_device(line):
     """
@@ -1230,6 +1174,7 @@ def load_device(line):
             case 'UPS':
                 global ups_board
                 ups_board = INA219(i2c, addr=address)
+                #print(ups_board.addr)
             case _:
                 print('ERROR: Device code not recognised: ' + line)
     else:
@@ -1253,7 +1198,7 @@ try:
     """
     File access can be problematic, so wrap in a try/except block
     """
-    with open('servo.txt', encoding="utf-8") as f:
+    with open('/home/f2andy/pdmrs/servo.txt', encoding="utf-8") as f:
         print('opened')
         servo = None
         comments = []
@@ -1268,8 +1213,6 @@ try:
                 Decorator.create(line)
             elif line[0:1] == 'b':
                 PButton.create(line, servo)
-            elif line[0:1] == 't':
-                Toggle.create(line, servo)
             elif line[0:1] == 'r':
                 Relay.create(line, servo)
             elif line[0:1] == 'l':
@@ -1301,7 +1244,7 @@ print_lcd(1, "Hello P&D MRS!")
 print(f"INFO: Found {'one' if ups_board else 'no'} UPS board.")
 
 print(f"INFO: Found {len(servos)} servo(s).")
-print(f"INFO: Found {len(buttons)} button(s) and toggle(s).")
+print(f"INFO: Found {len(buttons)} button(s).")
 print(f"INFO: Found {len(leds)} indicator LED(s).")
 print(f"INFO: Found {len(relays)} relay(s).")
 print(f"INFO: Found {len(flashers)} flashing LED(s).")
@@ -1422,7 +1365,6 @@ def main_loop():
             request['action'] = False
 
         if request['action'] == 'LED on':
-            print('ON response')
             if request['servo'] >= len(leds):
                 print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
@@ -1432,7 +1374,6 @@ def main_loop():
                     print(f'INFO: LED on {ident}')
             request['action'] = False
         if request['action'] == 'LED off':
-            print('OFF response')
             if request['servo'] >= len(leds):
                 print("WARNING: LED out of range (0-" + str(len(leds)) + ")")
             else:
@@ -1543,6 +1484,15 @@ class TrackPlan(tk.Toplevel):
         super().__init__(window, width=config.WIDTH, height=config.HEIGHT + 24)
         self.title('TrackPlan: ' + config.TITLE)
        
+        try:
+            self.img = Image.open("servo_icon.png")
+            self.img = ImageTk.PhotoImage(self.img)
+        except FileNotFoundError:
+            self.img = None
+            print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
+
+        if self.img:
+            ttk.Label(self, image=self.img).place(x=0, y=0)
         if config.LEFT_CLICK_ONLY:
             label = tk.Label(self, text='Left click a point to change it (no effect while moving)').place(x=40,y=0)
         else:
@@ -1744,11 +1694,13 @@ class ServoGridRow():
             return
 
         if self.servo.turn_on:
+            print('Turning off')
             self.lbl_state.config(text='OFF', foreground='black', background='white')
             self.lbl_target_angle.config(text=self.servo.get_off_angle())
             request['action'] = 'off'
             request['servo'] = self.servo.index
         else:
+            print('Turning on')
             self.lbl_state.config(text='ON', foreground='white', background='black')
             self.lbl_target_angle.config(text=self.servo.get_on_angle())
             request['action'] = 'on'
@@ -1902,7 +1854,7 @@ class LedGridRow():
     """
     Represents a row on the grid of the GUI. This will correspond to one LED,
     and buttons and labels on the row will change and reflect its state, but
-    which LED that is can vary depending on what offset is.
+    which LED that is can _vary depending on what offset is.
     """
 
     offset = 0
@@ -1912,17 +1864,17 @@ class LedGridRow():
         """ Responds to a menu click to show the window for LEDs"""
 
         newWindow = Toplevel(window)
-        newWindow.title('LEDs: ' + config.TITLE)
+        newWindow.title('LEDs: ' +  + config.TITLE)
         LedGridRow.headers(newWindow)
         for i in range(config.NUMBER_OF_ROWS):
             led_grid_rows.append(LedGridRow(newWindow, i))
            
     def all_leds_on():
-        """ Responds to a menu click to turn on all LEDs"""
+        """ Responds to a menu click to tirn on all LEDs"""
         request['action'] = 'all LED on'
 
     def all_leds_off():
-        """ Responds to a menu click to turn off all LEDs"""
+        """ Responds to a menu click to tirn off all LEDs"""
         request['action'] = 'all LED off'
 
 
@@ -1998,12 +1950,10 @@ class LedGridRow():
             self.lbl_on_list.config(text='---')
 
     def led_on_button(self, event):
-        print('ON request')
         request['action'] = 'LED on'
         request['servo'] = self.led.index
 
     def led_off_button(self, event):
-        print('OFF request')
         request['action'] = 'LED off'
         request['servo'] = self.led.index
 
@@ -2125,9 +2075,15 @@ class ServoWindow(tk.Tk):
 
         self.create_menubar()
        
-        ServoGridRow.headers(None, self.heading_font)
+        try:
+            self.img = Image.open("servo_icon.png")
+            self.img = ImageTk.PhotoImage(self.img)
+        except FileNotFoundError:
+            self.img = None
+            print('WARNING: Failed to find icon file, "servo_icon.png", but carrying on regardless!')
 
         # The widgets that do the work
+        ServoGridRow.headers(self.img, self.heading_font)
         for i in range(config.NUMBER_OF_ROWS):
             servo_grid_rows.append(ServoGridRow(i, self.label_font))
 
